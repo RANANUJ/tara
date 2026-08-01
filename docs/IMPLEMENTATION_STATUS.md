@@ -1,5 +1,13 @@
 # Tara Implementation Status
 
+## M8B Progress — Transcription Job Queue, Lifecycle, and Cancellation
+
+- Added a bounded, process-local STT registry with immutable request identity, duplicate completed-turn suppression, explicit transitions, global/per-connection/per-session limits, timeout state, cancellation, session/connection invalidation seams, accurate active/queued counters, and terminal cleanup.
+- Added focused job, queue, cancellation-isolation, and cleanup tests. No WebSocket transcript delivery, health/status work, or M8C behavior was added.
+- Validation: focused M8B coverage passed; STT/audio/auth/health/transport/migration regression set passed (71 tests); full backend passed (89 tests, one existing upstream warning); frontend lint/typecheck/tests/build passed (8 frontend tests). No model download or internet access occurred.
+- Known limitation: the registry is intentionally process-local and is not a distributed worker/queue. M8 remains incomplete.
+- Exact next sub-milestone: M8C — WebSocket Transcript Events. Do not begin it as part of M8B.
+
 ## M8A Progress — Faster-Whisper Provider Adapter
 
 - Added optional lazy faster-whisper loading that requires an explicitly provisioned local directory; automatic download is rejected and imports remain absent from normal startup.
