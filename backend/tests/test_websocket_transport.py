@@ -151,5 +151,7 @@ def test_audio_requires_negotiation_then_emits_level_and_vad_events(client: Test
         assert websocket.receive_json()["type"] == "audio.session.accepted"
         websocket.send_json(_event(session_id, 2, "audio.format", {"sample_rate": 16000, "sample_width_bytes": 2, "channels": 1, "frame_ms": 20}))
         payload = (10000).to_bytes(2, "little", signed=True) * (CANONICAL_FORMAT.frame_bytes // 2)
-        websocket.send_bytes(encode_frame(AudioFrame(UUID(audio_session_id), 0, payload)))
+        for sequence in range(5):
+            websocket.send_bytes(encode_frame(AudioFrame(UUID(audio_session_id), sequence, payload)))
+        assert websocket.receive_json()["type"] == "vad.speech.started"
         assert websocket.receive_json()["type"] == "audio.level"

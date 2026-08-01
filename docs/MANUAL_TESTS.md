@@ -69,6 +69,10 @@ Pass: each screen gives an accurate state and recovery action; cached data is no
 
 ## 5. Voice and Conversation
 
+### M7 Audit Boundary
+
+M7 provides transport and helper contracts only; it does not provide a Listen screen, AudioWorklet pipeline, STT, TTS, or device-selection UI. The voice procedures below remain planned manual acceptance procedures and must not be recorded as passed for M7. The only supported M7 browser behavior is user-invoked foreground `getUserMedia` capture with explicit stop/cancel/page-hide cleanup; locked-screen and background capture remain unsupported.
+
 ### MAN-V01 — Microphone Permission Grant
 
 1. Start from a browser profile with no microphone decision.

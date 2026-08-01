@@ -132,6 +132,17 @@ No test may send a real message, place a call, delete owner data, or incur cloud
 
 ## 8. Voice, STT, and TTS
 
+### M7 Audit Evidence
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| M7-AUD-001 | Unit | PCM format and framing | Only 16 kHz, mono, signed PCM16 little-endian 20 ms frames; malformed, oversized, mismatched, and invalid-sequence frames are rejected |
+| M7-AUD-002 | Unit | VAD lifecycle | Deterministic fixtures prove minimum speech, single start/end, silence completion, reset, failure safety, and duration limits without downloads |
+| M7-AUD-003 | Integration | Authenticated audio transport | Pre-hello/pre-start frames, mismatched sessions, invalid negotiation, revocation, and raw-payload leakage are rejected safely |
+| M7-AUD-004 | Unit | Foreground browser capture | Capture starts only through the explicit public method; permission errors, cleanup, page hiding, conversion, and framing are deterministic |
+
+M7 uses a deterministic local VAD test implementation only. Silero, STT, TTS, a browser AudioWorklet streaming pipeline, and final Listen UI are not implemented or claimed; real browser device-removal behavior remains a manual test for the future capture integration.
+
 | ID | Level | Scenario | Pass criterion |
 |---|---|---|---|
 | VOICE-001 | Component | Microphone grant | Selected device begins negotiated capture after explicit action |

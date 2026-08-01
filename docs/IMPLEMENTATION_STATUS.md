@@ -317,26 +317,33 @@ M2 — Backend Persistence Foundation. Start with SQLAlchemy session/unit-of-wor
 
 ### Completed Scope
 
-- Added canonical transient PCM framing, one negotiated audio session per authenticated WebSocket connection, deterministic VAD transitions, end-of-turn silence handling, and normalized audio-level events.
-- Added typed frontend PCM conversion/framing helpers only. No microphone UI, background capture, STT, TTS, model, memory, tools, or persistence was added.
+- Added canonical transient PCM framing, one negotiated audio session per authenticated WebSocket connection, deterministic VAD transitions, end-of-turn silence handling, duration limits, strict sequence/session binding, and smoothed/throttled audio-level events.
+- Audited and hardened M7 lifecycle handling: frames require an active owner session and negotiated stream; stop, cancel, flush, disconnect, timeout, invalidation, and failures clear the transient session; no raw audio buffering, files, database records, logs, or error payloads are introduced.
+- Added typed frontend PCM conversion, downmixing, explicit 16 kHz resampling, little-endian framing, and user-invoked foreground microphone permission/cleanup helpers. No microphone UI, browser AudioWorklet pipeline, background capture, STT, TTS, model, memory, tools, or persistence was added.
 
 ### Files Changed
 
-- `backend/src/tara_api/domain/audio.py`, `backend/src/tara_api/transport/audio.py`, `backend/src/tara_api/api/v1/websocket.py`, `frontend/lib/audio.ts`, `backend/tests/test_websocket_transport.py`, and `frontend/tests/unit/audio.test.ts`.
-- `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, and `docs/IMPLEMENTATION_STATUS.md`.
+- `backend/src/tara_api/domain/audio.py`, `backend/src/tara_api/transport/audio.py`, `backend/src/tara_api/api/v1/websocket.py`, and `backend/tests/test_websocket_transport.py`.
+- `backend/tests/audio/test_audio_format.py`, `test_audio_framing.py`, `test_audio_session_state.py`, `test_audio_buffering.py`, `test_vad.py`, `test_audio_levels.py`, `test_audio_websocket.py`, `test_audio_security.py`, and `test_audio_cleanup.py`.
+- `frontend/lib/audio.ts`, `frontend/lib/microphone.ts`, and `frontend/tests/unit/audio-format.test.ts`, `audio-resampler.test.ts`, `audio-framing.test.ts`, `microphone-lifecycle.test.ts`, and `microphone-permissions.test.ts`.
+- `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, `docs/MANUAL_TESTS.md`, and `docs/IMPLEMENTATION_STATUS.md`.
 
 ### Commands Run and Results
 
 | Command | Result |
 |---|---|
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/audio backend/tests/test_websocket_transport.py -q` | Passed: 35 focused audio/transport tests |
+| `corepack pnpm --dir frontend test -- tests/unit/audio-format.test.ts tests/unit/audio-resampler.test.ts tests/unit/audio-framing.test.ts tests/unit/microphone-lifecycle.test.ts tests/unit/microphone-permissions.test.ts` | Passed: 8 frontend tests total |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_websocket_transport.py backend/tests/auth backend/tests/test_health.py backend/tests/test_readiness.py backend/tests/test_m5_framework.py -q` | Passed: 26 M4/M5/M6 regression tests |
 | `backend/.venv/Scripts/python.exe -m ruff check backend` | Passed |
 | `backend/.venv/Scripts/python.exe -m mypy backend/src` | Passed: 54 source files |
-| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 45 tests; one existing upstream warning |
-| `pnpm validate` | Passed equivalently via frontend lint/typecheck/test/build and backend validation |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 74 tests; one existing upstream warning |
+| `corepack pnpm --dir frontend lint && corepack pnpm --dir frontend typecheck && corepack pnpm --dir frontend test && corepack pnpm --dir frontend build` | Passed: lint, typecheck, 8 tests, and production build |
+| `pnpm validate` | Passed: root validation completed through a temporary Corepack shim removed after execution |
 
 ### Unresolved Blockers
 
-Silero remains an optional future adapter; M7 uses deterministic VAD only and does not download models.
+Silero remains an optional future adapter; M7 uses deterministic VAD only and does not download models. Browser AudioWorklet streaming, device-change integration, and final Listen UI are not implemented; foreground capture starts only from an explicit public method and stops on the helper's page-hide lifecycle signal.
 
 ### Exact Recommended Next Milestone
 

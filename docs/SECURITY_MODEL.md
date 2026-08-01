@@ -232,12 +232,12 @@ M6 implements only an authenticated JSON transport. `POST /api/v1/ws/tickets` re
 
 M6 logs connection lifecycle, safe event type, correlation ID, duration, and minimized owner/session references only. It never logs tickets, bearer values, cookies, or event payloads. Binary frames and every future audio/assistant/tool/confirmation event family are rejected or reserved until their authorized milestone.
 
-M7 permits microphone data only through a user-initiated foreground browser capture session bound to its authenticated WebSocket owner/session/connection. Canonical PCM frames are size-, UUID-, and sequence-validated before VAD; raw bytes are transient counters-only input and are never stored, logged, placed in errors, or written to SQLite. Background, locked-screen, wake-word, native, and automatic capture are not implemented or claimed.
+M7 permits microphone data only through a user-initiated foreground browser capture session bound to its authenticated WebSocket owner/session/connection. Canonical PCM frames are exact-size, UUID-, owner-session-, state-, and sequence-validated before VAD; raw bytes are transient counters-only input and are never stored, logged, placed in errors, or written to SQLite. There is no raw-audio queue, database record, file artifact, or browser persistence path. Stop, cancel, flush, invalidation, timeout, disconnect, and transport failure clear the in-memory session. Background, locked-screen, wake-word, native, and automatic capture are not implemented or claimed.
 
 - Use `wss` outside loopback.
 - Accept a single-use, short-lived ticket; redact it from all logs.
 - Verify authenticated session, allowed origin, ticket binding, protocol version, and connection count.
-- Enforce maximum text frame, binary frame, buffered audio, utterance, and idle durations.
+- Enforce maximum text frame, exact binary frame, session (60 second), utterance (30 second), and idle durations; M7 retains no audio buffer.
 - Validate event sequence and state transitions; reject binary audio without an active negotiated stream.
 - On disconnect, stop capture processing, cancel output, and expire pending voice confirmation challenges.
 - Reconnection never replays approval or resumes microphone capture automatically.
