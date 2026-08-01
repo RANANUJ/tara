@@ -343,3 +343,15 @@ M7 uses a deterministic local VAD test implementation only. Silero, STT, TTS, a 
 | Regression | Audio transport, ticket/session binding, migrations, backend suite, and frontend validation remain covered by their existing suites | `backend/tests/audio`, `backend/tests/test_websocket_transport.py`, `backend/tests/test_migrations.py`, `frontend/tests` |
 
 All standard M8 tests use fakes or mocked faster-whisper modules. The `stt_integration` marker is reserved for an explicitly provisioned local model and is not part of standard CI or repository validation. No standard M8 test downloads a model, accesses the internet, requires a GPU, or is xfailed.
+
+## 15. M9A Implemented Language-Model Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| Domain contracts | Bounded text, UTC timestamps, UUID identity, state/intent enums, confidence, non-negative usage, and no chain-of-thought field | `backend/tests/agent/test_agent_models.py` |
+| Provider-neutral validation | Context limits, control-character rejection, safe Unicode handling, and line-ending normalization | `backend/tests/agent/test_llm_validation.py` |
+| Fake provider | Deterministic response/usage, delay, timeout, cancellation, unavailable state, malformed/excessive/invalid output, and development-only guard | `backend/tests/agent/test_fake_llm.py` |
+| Ollama adapter | Mocked request/role mapping, final response/usage mapping, malformed/unavailable/timeout/cancellation behavior, budgets, no pull route, and credential/config rejection | `backend/tests/agent/test_ollama_adapter.py` |
+| Provider health | Disabled/fake development snapshots, mocked ready/unavailable/timeout Ollama snapshots, and production fake/settings rejection | `backend/tests/agent/test_llm_health.py` |
+
+M9A standard tests use deterministic fakes and `httpx.MockTransport` only. They do not require an Ollama process, model pull, internet access, cloud provider, or GPU hardware.

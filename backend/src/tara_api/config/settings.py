@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,15 @@ class Settings(BaseSettings):
     stt_language_hint: Literal["en", "hi"] | None = None
     stt_partial_mode: Literal["provider", "final_only"] = "provider"
     stt_local_model_directory: str | None = None
+    llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
+    llm_required: bool = False
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = ""
+    llm_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    llm_context_token_budget: int = Field(default=4096, ge=128, le=32768)
+    llm_output_token_budget: int = Field(default=512, ge=1, le=8192)
+    llm_temperature: float = Field(default=0.2, ge=0, le=1)
+    llm_streaming: bool = False
 
     @model_validator(mode="after")
     def validate_stt(self) -> "Settings":
@@ -59,6 +69,17 @@ class Settings(BaseSettings):
             raise ValueError("production cannot use the fake STT provider")
         if self.stt_required and self.stt_provider == "disabled":
             raise ValueError("required STT cannot be disabled")
+        if self.environment == "production" and self.llm_provider == "fake":
+            raise ValueError("production cannot use the fake language-model provider")
+        if self.llm_required and self.llm_provider == "disabled":
+            raise ValueError("required language-model provider cannot be disabled")
+        parsed_ollama_url = urlsplit(self.ollama_base_url)
+        if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.hostname or parsed_ollama_url.username or parsed_ollama_url.password:
+            raise ValueError("invalid Ollama base URL")
+        if self.llm_provider == "ollama" and not self.ollama_model:
+            raise ValueError("Ollama provider requires a model identifier")
+        if self.llm_streaming:
+            raise ValueError("streaming language-model output is not implemented")
         return self
 
     def secret_values(self) -> tuple[str, ...]:

@@ -343,3 +343,11 @@ If suspicious behavior occurs:
 - The registry applies fixed total-pending, concurrent, per-connection, per-session, audio-size, and timeout limits. Terminal records are pruned during subsequent submissions and can be explicitly cleaned; the registry remains process-local and is not a distributed queue.
 - `fake` is a deterministic test/development provider and configuration rejects it in production. A disabled or unavailable optional provider degrades operational status without blocking readiness; an unavailable required provider blocks readiness.
 - Readiness only asks provider readiness and counts bounded local jobs. It does not load a model, infer, download, or contact the network. Authenticated status exposes safe provider/mode/limit/counter metadata only.
+
+## 19. M9A Local Language-Model Boundary
+
+- M9A accepts only bounded system, user, and assistant text messages. It does not accept client-supplied owner, session, or connection identity, tool definitions, arbitrary generation options, provider metadata, or a chain-of-thought field.
+- Ollama receives only the provider-neutral messages and server-controlled model/options. No bearer token, password hash, session token, audit payload, model filesystem path, or URL credential is placed in a request.
+- The adapter rejects URL credentials, never runs `ollama pull`, has no cloud fallback, and does not silently substitute the fake provider. The configured model must already exist.
+- Provider failures, malformed responses, and timeouts map to stable typed codes. Client-facing behavior never includes response metadata, provider exception text, URLs, hardware details, stack traces, prompt text, or generated text in normal logs.
+- Readiness is bounded and performs only the local `/api/tags` check; it does not pull, create, or infer with a model. M9A health snapshots are internal only and do not modify global readiness or authenticated status.

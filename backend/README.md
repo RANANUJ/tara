@@ -24,3 +24,20 @@ python -m ruff check backend
 python -m mypy backend/src
 python -m pytest backend/tests
 ```
+
+## M9A local text model (optional)
+
+M9A adds framework-independent language-model contracts plus final-only provider adapters. It does not add an agent loop, conversation persistence, tools, WebSocket agent events, memory retrieval, or TTS.
+
+Ollama is an optional local runtime. Tara never runs `ollama pull`, auto-creates a model, or falls back to a cloud or fake provider. Provision a model yourself, then configure only a credential-free local URL and an existing model identifier:
+
+```powershell
+$env:TARA_LLM_PROVIDER = "ollama"
+$env:TARA_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+$env:TARA_OLLAMA_MODEL = "your-provisioned-model"
+$env:TARA_LLM_CONTEXT_TOKEN_BUDGET = "4096"
+$env:TARA_LLM_OUTPUT_TOKEN_BUDGET = "512"
+$env:TARA_LLM_TEMPERATURE = "0.2"
+```
+
+M9A supports final-only generation. `TARA_LLM_STREAMING` must remain `false`; no agent deltas are exposed. `TARA_LLM_REQUIRED=false` keeps the provider optional for later health integration. The deterministic `fake` provider is for development/test only and production settings reject it. Standard tests use mocked HTTP and do not require Ollama, a model download, network access, or GPU hardware.

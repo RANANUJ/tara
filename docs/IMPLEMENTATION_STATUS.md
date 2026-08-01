@@ -1,5 +1,14 @@
 # Tara Implementation Status
 
+## M9A Progress - Agent Domain Contracts, Fake LLM, and Ollama Provider Adapter
+
+- Added framework-independent agent/model contracts, bounded request/response validation, typed provider failures, deterministic fake language-model behavior, final-only Ollama HTTP mapping, and a safe internal provider-health snapshot. No agent orchestration, persistence, WebSocket events, tools, semantic memory, TTS, or product UI was added.
+- Added safe LLM settings and `.env.example` placeholders: disabled by default; production rejects fake; Ollama requires a credential-free URL and explicit existing model; streaming is rejected for M9A; no auto-pull or fallback exists. `httpx` was promoted from development-only to the minimal runtime dependency required for the async local Ollama HTTP adapter.
+- Added 18 focused offline M9A tests covering contracts, validation, fake behavior, mocked Ollama mapping/failures, health snapshots, production fake-health rejection, and settings guards. Standard tests use no Ollama server, model pull, network access, or GPU.
+- Validation passed: focused M9A tests (18), targeted M1-M8 regression set (99), full backend suite (117), Ruff, mypy (65 source files), frontend lint/typecheck/tests (8), clean frontend production build, and root `pnpm validate`. The only warning is the existing upstream FastAPI `StarletteDeprecationWarning` from `TestClient`; 0 skipped, 0 xfailed, and 0 failed tests.
+- Known limitation: M9A is final-only and its health snapshot is not integrated into global readiness or `/api/v1/status`. The optional Ollama runtime/model must be provisioned explicitly. M9 remains in progress; do not mark M9 complete.
+- Exact next sub-milestone: M9B - Intent Router, Prompt Builder, and Structured Context. Do not start M9B or M10.
+
 ## M8 Final Acceptance - Complete
 
 M8 is complete. No M9 work was added.
