@@ -90,6 +90,8 @@ When ElevenLabs is enabled, only the minimum text and voice configuration needed
 
 ## 6. Authentication Architecture
 
+M4 uses one normalized-email owner row guarded by a unique singleton slot. Passwords use Argon2id with library-managed salts; opaque bearer tokens are returned once and only SHA-256 token hashes are persisted. Bearer tokens are an API-first M4 transport; the browser client must later prefer secure HttpOnly SameSite cookies or a short-lived in-memory credential strategy. Login failures are generic and rate limited with an in-memory single-process seam.
+
 ### 6.1 Bootstrap
 
 - Bootstrap is permitted only when no owner record exists.

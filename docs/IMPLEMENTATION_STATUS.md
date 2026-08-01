@@ -4,7 +4,7 @@
 
 Status date: 2026-08-01
 
-Current phase: M3 — Core Domain and Safety Foundation complete.
+Current phase: M4 — Owner Bootstrap and Session Authentication complete.
 
 Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating only. No authentication, semantic retrieval, AI, voice, WebSocket, product screen, or real device action has been implemented.
 
@@ -94,7 +94,39 @@ When implementation is authorized:
 - Update requirement disposition when a capability becomes supported, remains unsupported, or is descoped through an accepted ADR.
 - Keep this document factual; planned work belongs in `IMPLEMENTATION_PLAN.md`.
 
-## 7. M3 Completion Evidence
+## 7. M4 Completion Evidence
+
+### Completed Scope
+
+- Added single-owner bootstrap, normalized email/password validation, Argon2id password hashing, opaque bearer sessions, generic login failures, local rate-limiting seam, and authenticated session/logout/revocation routes.
+- Added M4 migration `20260801_0002_owner_authentication.py` with singleton owner constraint, password-hash-only storage, token-hash-only sessions, and lookup/expiry indexes.
+- Added framework-independent owner/session contracts, authentication service, and internal SQLAlchemy adapter. No AI, WebSocket, voice, frontend product UI, real tool, or device action was added.
+
+### Files Changed
+
+- Authentication: `backend/src/tara_api/auth`, `backend/src/tara_api/domain/auth.py`, and `backend/src/tara_api/api/v1/auth.py`.
+- Persistence: `backend/src/tara_api/persistence/auth_store.py`, owner/session ORM models, and `backend/migrations/versions/20260801_0002_owner_authentication.py`.
+- Configuration/tests/docs: `backend/pyproject.toml`, `backend/src/tara_api/main.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/test_auth.py`, `docs/SECURITY_MODEL.md`, and `docs/API_CONTRACT.md`.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `python -m pytest backend/tests/test_auth.py -q` | Passed: 1 focused auth lifecycle test |
+| `python -m ruff check backend` | Passed |
+| `python -m mypy backend/src` | Passed: 39 source files |
+| `python -m pytest backend/tests -q` | Passed: 22 tests; one existing upstream warning |
+| `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend validation |
+
+### Unresolved Blockers
+
+None. Bearer tokens are API-first for M4; a later browser integration must prefer HttpOnly SameSite cookies or short-lived in-memory credentials.
+
+### Exact Recommended Next Milestone
+
+M5 — Health, Status, and Error Framework. Do not start WebSockets, AI, voice, tools, or frontend product work as part of M5.
+
+## 8. M3 Completion Evidence
 
 ### Completed Scope
 

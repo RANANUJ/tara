@@ -2,13 +2,19 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 import uvicorn
 from fastapi import FastAPI
 
+from tara_api.api.v1.auth import router as auth_router
 from tara_api.api.v1.health import router as health_router
+from tara_api.auth.rate_limit import InMemoryLoginRateLimiter
+from tara_api.auth.security import Argon2idPasswordHasher, SecureSessionTokenGenerator
+from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings, get_settings
 from tara_api.observability.logging import configure_logging, log_settings_loaded
+from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
 
 
@@ -40,7 +46,19 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     )
     app.state.settings = resolved_settings
     app.state.database = database or Database(resolved_settings.database_url)
+    app.state.authentication_store = SqlAlchemyAuthenticationStore(app.state.database)
+    app.state.authentication_service = AuthenticationService(
+        app.state.authentication_store,
+        app.state.authentication_store,
+        Argon2idPasswordHasher(),
+        SecureSessionTokenGenerator(),
+        InMemoryLoginRateLimiter(),
+        lambda: datetime.now(UTC),
+        timedelta(minutes=resolved_settings.session_absolute_minutes),
+        timedelta(minutes=resolved_settings.session_idle_minutes),
+    )
     app.include_router(health_router, prefix="/api/v1")
+    app.include_router(auth_router, prefix="/api/v1")
     return app
 
 

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     database_url: str = "sqlite+aiosqlite:///./data/tara.db"
     service_secret: SecretStr = SecretStr("")
+    session_absolute_minutes: int = Field(default=1440, ge=5, le=10080)
+    session_idle_minutes: int = Field(default=60, ge=5, le=1440)
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""
