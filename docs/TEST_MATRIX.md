@@ -1,0 +1,313 @@
+# Tara Test Matrix
+
+## 1. Test Strategy
+
+Testing follows the architecture boundaries and starts with the narrowest deterministic layer:
+
+1. Unit tests for policy, state, transformation, and UI behavior.
+2. Component tests for responsive and accessibility behavior.
+3. Integration tests with temporary SQLite/Chroma and fake providers.
+4. Contract tests for REST/OpenAPI and versioned WebSocket events.
+5. End-to-end tests for complete owner workflows.
+6. Security, performance, recovery, and manual device tests before release.
+
+No test may send a real message, place a call, delete owner data, or incur cloud cost unless it is explicitly tagged, isolated, and manually authorized. Consequential automated tests use a fake tool that records intent without external effects.
+
+## 2. Planned Test Tooling
+
+| Area | Planned tools |
+|---|---|
+| Frontend unit/component | Vitest, React Testing Library, user-event |
+| Frontend accessibility | axe-core plus keyboard/screen-reader manual checks |
+| Browser end-to-end | Playwright with compact and expanded projects |
+| Backend unit/integration | pytest, pytest-asyncio, HTTPX/FastAPI test client |
+| Property/state tests | Hypothesis where confirmation, retention, and path-policy state spaces benefit |
+| Database | Temporary SQLite databases, Alembic migration fixtures, isolated Chroma directories |
+| AI/voice | Deterministic provider fakes and versioned WAV/text fixtures; optional tagged local-model tests |
+| Contract | OpenAPI compatibility checks and JSON Schema WebSocket fixtures |
+| Performance | Timestamped pipeline probes with warmed and cold profiles |
+
+## 3. Test Environments
+
+| Environment | Purpose | Data policy |
+|---|---|---|
+| Unit | Pure modules and components | Synthetic only |
+| Integration | FastAPI + temporary stores + fake providers | Synthetic only |
+| Local AI | Real Ollama/faster-whisper/Piper | Public test fixtures only |
+| Cloud TTS opt-in | ElevenLabs smoke/latency | Synthetic text, tagged, cost-capped |
+| Browser desktop | Chromium plus one additional supported engine | Synthetic owner |
+| Browser mobile | Real Android/iOS browsers or devices where supported | Synthetic owner |
+| Private deployment | Tailscale HTTPS production-like host | Synthetic pre-release data |
+
+## 4. Foundation and Persistence
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| FND-001 | CI | Frontend clean install and build | Pinned install completes; build exits successfully |
+| FND-002 | CI | Backend clean environment install | Python 3.12 environment resolves and imports cleanly |
+| FND-003 | CI | Static quality commands | Type-check, lint, and formatting checks pass |
+| FND-004 | CI | Test isolation | Tests write only to declared temporary paths and leave no repository data |
+| DB-001 | Integration | Empty database upgrade | Alembic upgrades from empty to head |
+| DB-002 | Integration | Idempotent current migration | Upgrade at head performs no destructive duplicate work |
+| DB-003 | Integration | Transaction rollback | Injected failure leaves no partial domain records |
+| DB-004 | Integration | Optimistic concurrency | Stale resource version returns conflict without overwrite |
+| DB-005 | Integration | Invalid database path/key | Startup fails with safe actionable error |
+| DB-006 | Integration | Memory/index outbox commit | Memory and outbox row commit atomically |
+| DB-007 | Integration | Chroma write failure | SQLite remains committed and outbox remains retryable |
+| DB-008 | Integration | Outbox replay | Repeated upsert/delete is idempotent |
+| DB-009 | Integration | Index rebuild | Rebuild produces current SQLite-backed searchable IDs only |
+
+## 5. UI, Responsive, and Accessibility
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| UI-001 | Visual | Guide Star Idle | Matches token/state specification in both shells |
+| UI-002 | Visual | Guide Star Listening | Signal animation responds to bounded amplitude |
+| UI-003 | Visual | Guide Star Thinking | Inward/rotation treatment is restrained and stable |
+| UI-004 | Visual | Guide Star Speaking | Output envelope drives waves and stops on cancellation |
+| UI-005 | Visual | Confirming/Error/Offline | Each state is distinct without color alone |
+| UI-006 | Component | Compact navigation | Four destinations remain reachable with safe-area padding |
+| UI-007 | Component | Expanded navigation | Sidebar persists and identifies active route |
+| UI-008 | Component | Compact transcript sheet | Sheet opens, resizes, and closes without hiding critical controls |
+| UI-009 | Component | Responsive transition | State and route survive width change without duplication |
+| UI-010 | Component | Async states | Every core screen renders loading, empty, error, and offline variants |
+| A11Y-001 | Automated | Semantic landmarks/headings | No critical axe violations; hierarchy is valid |
+| A11Y-002 | Component | Keyboard navigation | All interactive controls reachable in logical order |
+| A11Y-003 | Component | Focus management | Dialog/sheet/confirmation focus enters and returns predictably |
+| A11Y-004 | Visual | Contrast and target size | WCAG 2.2 AA contrast and minimum target sizes pass |
+| A11Y-005 | Component | Reduced motion | Continuous/spatial animation is disabled while state remains clear |
+| A11Y-006 | E2E | Text-only assistant path | Complete assistant turn works without microphone/audio playback |
+
+## 6. Authentication and API Framework
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| AUTH-001 | Integration | First bootstrap | Owner/session created once from permitted context |
+| AUTH-002 | Security | Second bootstrap | Rejected without revealing sensitive owner state |
+| AUTH-003 | Integration | Valid login | Secure cookies set and private API becomes available |
+| AUTH-004 | Security | Invalid login/rate limit | Failure is generic, audited, and throttled |
+| AUTH-005 | Integration | Refresh rotation | New credentials work; prior refresh cannot be reused |
+| AUTH-006 | Integration | Logout | Current session is revoked and cookies cleared |
+| AUTH-007 | Integration | Revoke other device | Target session fails on next request/socket attempt |
+| AUTH-008 | Security | Expired access session | Refresh path works only with valid rotating refresh credential |
+| AUTH-009 | Security | Missing/invalid CSRF | State-changing request is rejected |
+| AUTH-010 | Security | Cross-origin request | Origin policy rejects credentialed mutation |
+| AUTH-011 | Unit | Password storage | Only approved memory-hard hash and metadata are persisted |
+| AUTH-012 | Security | Credential redaction | No passphrase, token, cookie, or signing secret appears in logs |
+| API-001 | Contract | Problem response | Required stable fields and correlation ID are present |
+| API-002 | Contract | Request validation | Invalid fields return deterministic field errors |
+| API-003 | Contract | Cursor pagination | Stable ordering; no duplicate/omitted records across pages |
+| API-004 | Integration | Idempotency key | Retried mutation returns one logical outcome |
+| API-005 | Contract | Version compatibility | Reviewed OpenAPI changes are backward-compatible within v1 |
+
+## 7. Observability and WebSocket
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| OBS-001 | Integration | Request correlation | HTTP request, service work, and response share request ID |
+| OBS-002 | Integration | Turn correlation | WebSocket, STT, model, TTS, and tool timing share turn ID |
+| OBS-003 | Security | Log redaction fixture | Sensitive fixture values are absent from all log outputs |
+| OBS-004 | Integration | Dependency status | Each dependency reports ready/degraded/unavailable accurately |
+| OBS-005 | Integration | Metrics timing | Required latency metrics are emitted once per completed turn |
+| OBS-006 | Integration | Audit separation | Security events are recorded without sensitive payload content |
+| WS-001 | Contract | Valid ticket handshake | `session.ready` follows authenticated one-time ticket use |
+| WS-002 | Security | Missing/expired ticket | Upgrade is rejected |
+| WS-003 | Security | Ticket replay | Second use is rejected |
+| WS-004 | Security | Wrong origin | Upgrade is rejected despite valid session |
+| WS-005 | Contract | Event envelope | Required version/ID/session/sequence/time/payload fields validate |
+| WS-006 | Contract | Sequence violation | Duplicate/out-of-order control event is handled deterministically |
+| WS-007 | Integration | Heartbeat timeout | Dead connection closes and runtime state recovers |
+| WS-008 | Security | Oversized text/binary frame | Frame is rejected without process instability |
+| WS-009 | Integration | Reconnect | New socket starts Idle and REST durable state remains consistent |
+| WS-010 | Security | Reconnect with pending confirmation | Challenge is not silently approved or resumed |
+| WS-011 | Integration | Backpressure | Excess queued audio yields bounded recoverable error |
+| WS-012 | Contract | Unsupported protocol/codec | Explicit protocol error precedes clean close |
+
+## 8. Voice, STT, and TTS
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| VOICE-001 | Component | Microphone grant | Selected device begins negotiated capture after explicit action |
+| VOICE-002 | Component | Microphone denial | Clear explanation and retry/settings action; no reconnect loop |
+| VOICE-003 | Integration | Audio negotiation | Client/server agree on supported codec/rate/channels |
+| VOICE-004 | Integration | Speech start | Silero fixture emits one authoritative start event |
+| VOICE-005 | Integration | End-of-turn silence | Configured 700 ms–1 s range ends turn as expected |
+| VOICE-006 | Integration | Noise-only fixture | No false completed utterance above allowed threshold |
+| VOICE-007 | Integration | Maximum utterance | Capture ends safely with user-visible limit message |
+| VOICE-008 | Component | Device removal | Active input stops and UI offers device recovery |
+| VOICE-009 | E2E | Hidden/suspended page | Session reports limitation and never claims background wake support |
+| VOICE-010 | E2E | Barge-in | Speaking stops and new Listening turn starts |
+| VOICE-011 | Integration | Cancel propagation | Old LLM/TTS work receives cancellation |
+| VOICE-012 | Integration | Stale output frame | Cancelled stream audio is discarded |
+| VOICE-013 | E2E | Rapid repeated interruption | State remains ordered and no overlapping audio plays |
+| VOICE-014 | E2E | Voice loop recovery | Error returns to Idle and next turn succeeds |
+| STT-001 | Local AI | Clean speech fixture | Final transcript matches expected tolerance |
+| STT-002 | Local AI | Accent/noise fixture set | Accuracy meets documented fixture threshold |
+| STT-003 | Integration | Partial replacement | Partial text replaces prior hypothesis, not duplicates it |
+| STT-004 | Integration | Final ordering | Final transcript precedes model turn start |
+| STT-005 | Integration | STT cancellation | No final transcript is emitted for cancelled stream |
+| STT-006 | Integration | STT timeout | Safe error and recoverable Idle state |
+| STT-007 | Integration | STT worker saturation | Bounded backpressure; event loop stays responsive |
+| STT-008 | Integration | STT health | Missing model reports unavailable with setup guidance |
+| TTS-001 | Integration | ElevenLabs stream | Audio starts from stable sentence before full response completes |
+| TTS-002 | Security | Cloud payload minimization | Request contains synthesis text/settings only |
+| TTS-003 | Integration | Local mode | Zero ElevenLabs calls; Piper output selected |
+| TTS-004 | Local AI | Piper synthesis | Supported fixture text produces playable output |
+| TTS-005 | Integration | Online pre-stream failure | One Piper fallback starts without duplicate text/audio |
+| TTS-006 | Integration | Mid-stream provider failure | Current stream ends cleanly; no overlapping fallback |
+| TTS-007 | Integration | TTS cancellation | Provider and output stream stop promptly |
+| TTS-008 | Component | Playback blocked | Browser autoplay restriction produces actionable control |
+| TTS-009 | Integration | Secret isolation | ElevenLabs key never enters client bundle, API response, or log |
+
+## 9. Conversations and AI
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| CONV-001 | Integration | Create conversation | Durable ID and timestamps are returned |
+| CONV-002 | Integration | Turn persistence | User/assistant turns preserve order and terminal status |
+| CONV-003 | Integration | Cancelled turn | Terminal status is cancelled; stale deltas are rejected |
+| CONV-004 | Integration | History pagination | Stable cursor order with bounded payload |
+| CONV-005 | Security | Hidden prompt exclusion | API returns no system policy or secret context |
+| AI-001 | Integration | Ollama health | Configured model availability is reported accurately |
+| AI-002 | Integration | Stream text | Ordered deltas produce one final response |
+| AI-003 | Integration | Model timeout | Turn fails safely within configured bound |
+| AI-004 | Integration | Ollama OOM/unavailable | Graceful user response; backend remains responsive |
+| AI-005 | Integration | Model cancellation | No stale delta after cancellation |
+| AI-006 | Unit | Context bound | Recent turns remain within configured token/record budget |
+| AI-007 | Unit | Low confidence | Clarification is returned; no tool proposal executes |
+| AI-008 | Security | Secret exclusion | Model context contains no provider/auth/storage secrets |
+| AI-009 | Integration | Simple intent routing | Fixture selects fast model with rationale code |
+| AI-010 | Integration | Reasoning intent routing | Fixture selects larger local model |
+| AI-011 | Performance | Router overhead | Routing remains within allocated latency budget |
+| AI-012 | Integration | One tool loop | Propose → validate → observe → answer order is correct |
+| AI-013 | Integration | Multi-tool loop | Dependencies execute sequentially and results stay bound |
+| AI-014 | Unit | Iteration limit | Loop terminates with safe explanation at configured maximum |
+| AI-015 | Unit | Context budget with tools | Oversized tool output is bounded and summarized safely |
+| AI-016 | Security | Prompt injection in tool output | Policy/capability/confirmation remain unchanged |
+| AI-017 | Integration | Tool failure observation | Model receives safe typed failure and does not fabricate success |
+| AI-018 | Integration | Multi-step cancellation | Active/pending steps stop; completed side effects are not misreported |
+
+## 10. Memory Lifecycle
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| MEM-001 | Integration | Create preference | SQLite record and index outbox are durable |
+| MEM-002 | Integration | Edit memory | Version increments; semantic index updates eventually |
+| MEM-003 | Integration | Pin/unpin | Retention eligibility changes immediately in SQLite |
+| MEM-004 | Integration | Task completion | Status and configured expiry/archive policy apply |
+| MEM-005 | Integration | Category filters | Results contain only requested authorized category |
+| MEM-006 | Integration | Lexical search | Exact fixture is returned |
+| MEM-007 | Integration | Semantic search | Relevant fixture ranks within documented threshold |
+| MEM-008 | Security | Deleted candidate filtering | Stale Chroma ID is never returned to client/model |
+| MEM-009 | Integration | Chroma unavailable | Structured browse/edit continues in degraded mode |
+| MEM-010 | Integration | Provenance | User can inspect safe source metadata |
+| MEM-011 | Unit | Context ranking | Pinned and relevant items outrank unrelated history |
+| MEM-012 | Unit | Context minimization | Retrieval returns no more than configured bound |
+| MEM-013 | Time-controlled | Casual expiry | Unpinned casual record expires after 30 days |
+| MEM-014 | Time-controlled | Pinned exemption | Pinned record survives automatic retention job |
+| MEM-015 | Time-controlled | Preference retention | Preference remains until explicit deletion/change |
+| MEM-016 | Time-controlled | Completed task policy | Task follows configured completion retention |
+| MEM-017 | Integration | Consolidation proposal | Summary preserves source references |
+| MEM-018 | Integration | Consolidation deduplication | Repeated run does not duplicate equivalent facts |
+| MEM-019 | Integration | Export contents | Expected current records and provenance are present |
+| MEM-020 | Security | Export minimization | No secrets, hashes, tokens, or embeddings are included |
+| MEM-021 | Time-controlled | Export expiry | Artifact and download access disappear after TTL |
+| MEM-022 | Security | Confirmed hard delete | No deletion occurs before valid confirmation |
+| MEM-023 | Integration | Cross-store delete | SQLite, Chroma, cache, and staging references are removed |
+| MEM-024 | Integration | Delete retry/repair | Interrupted index deletion resumes without resurrecting content |
+
+## 11. Tools and Confirmation
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| TOOL-001 | Unit | Registration schema | Missing capability/risk/timeout/idempotency metadata is rejected |
+| TOOL-002 | Security | Disabled capability | Provider is never invoked |
+| TOOL-003 | Security | Unsupported native capability | Returns `requires_native_bridge`; no execution path exists |
+| TOOL-004 | Unit | Invalid model arguments | Typed validation rejects before execution |
+| TOOL-005 | Security | Path traversal | Canonical target outside allowlist is denied |
+| TOOL-006 | Security | Symlink/junction escape | Resolved target outside allowlist is denied |
+| TOOL-007 | Integration | Read-only tool success | Safe typed result and audit summary are emitted |
+| TOOL-008 | Integration | Tool timeout | Result is failed or uncertain according to dispatch state |
+| TOOL-009 | Integration | Idempotent retry | One logical effect/result is recorded |
+| TOOL-010 | Integration | Non-idempotent retry | Blind automatic retry is blocked |
+| TOOL-011 | Security | Log redaction | Tool secret/content fields do not enter logs |
+| TOOL-012 | Integration | Capability revocation | New calls fail immediately; affected pending challenge invalidates |
+| CONF-001 | Unit | Read-only classification | No confirmation unless stricter policy applies |
+| CONF-002 | Unit | External action classification | Confirmation is mandatory |
+| CONF-003 | Unit | Destructive/financial classification | Confirmation is mandatory and summary names consequence |
+| CONF-004 | Integration | Challenge binding | Challenge stores canonical action hash and policy/session binding |
+| CONF-005 | Security | Generic “yes” without challenge | No action executes |
+| CONF-006 | Security | Expired challenge | Approval is rejected |
+| CONF-007 | Security | Replayed approval | Action executes at most once |
+| CONF-008 | Security | Argument substitution | Changed action cannot use prior challenge |
+| CONF-009 | Security | Target version change | Challenge invalidates before execution |
+| CONF-010 | Security | Session revocation | Pending challenge cannot execute |
+| CONF-011 | Security | Capability change | Pending challenge cannot execute |
+| CONF-012 | Integration | Explicit rejection | Action remains unexecuted and is audited |
+| CONF-013 | Integration | Valid approval | Exact fake action executes once |
+| CONF-014 | Integration | Disconnect | Pending voice challenge is not approved/resumed |
+| CONF-015 | Integration | Unknown provider outcome | Status is uncertain; no blind retry |
+| CONF-016 | Integration | Proactive proposal | Scheduled job creates challenge but does not execute action |
+
+## 12. Scheduler, Security, Performance, and Deployment
+
+| ID | Level | Scenario | Pass criterion |
+|---|---|---|---|
+| JOB-001 | Time-controlled | Retention job schedule | Executes at configured local intent/UTC instant |
+| JOB-002 | Integration | Consolidation isolation | Job failure does not roll back unrelated durable work |
+| JOB-003 | Integration | Job restart recovery | Persisted next run survives process restart |
+| JOB-004 | Integration | Single leader | One occurrence executes once |
+| JOB-005 | Integration | Job observability | Start/result/duration and safe counts are recorded |
+| JOB-006 | Integration | Create reminder | Next run and timezone are correct |
+| JOB-007 | Time-controlled | DST transition | Documented skip/duplicate policy is honored |
+| JOB-008 | Time-controlled | Missed run | Configured skip/run-once behavior is honored |
+| JOB-009 | Integration | Disable schedule | No future occurrence executes |
+| JOB-010 | Integration | Update schedule | Old next run is replaced atomically |
+| JOB-011 | Integration | Reminder delivery | Active client receives one non-consequential event |
+| JOB-012 | Integration | No active client | Event remains safely visible in durable status/history as designed |
+| JOB-013 | Security | Scheduled tool request | Consequential call pauses for confirmation |
+| JOB-014 | Integration | Scheduler unavailable | Settings reports degraded; core assistant remains usable |
+| SEC-001 | Security | Unauthenticated private API | Request is denied |
+| SEC-002 | Security | Session fixation | Login rotates any pre-auth session identifiers |
+| SEC-003 | Security | Cookie attributes | Secure, HttpOnly, SameSite, path, and expiry are correct |
+| SEC-004 | Security | Session revocation race | Revoked session cannot create new ticket/action |
+| SEC-005 | Security | WebSocket URL/log redaction | Ticket is absent from logs and error bodies |
+| SEC-006 | Security | WebSocket event fuzzing | Invalid schemas/state cannot crash or execute work |
+| SEC-007 | Security | Connection exhaustion | Per-session limits protect service availability |
+| SEC-008 | Security | Filesystem device/network path | Disallowed path classes are denied |
+| SEC-009 | Security | Tool confused-deputy attempt | Granted capability cannot widen target scope |
+| SEC-010 | Security | Untrusted content instructions | Tool data cannot alter system/tool policy |
+| SEC-011 | Security | Confirmation race | Concurrent approvals produce one execution |
+| SEC-012 | Security | Confirmation summary integrity | Displayed summary matches bound normalized action |
+| SEC-013 | Security | Data remanence | Hard-delete fixture absent from active stores/exports |
+| SEC-014 | Security | Prompt-based permission escalation | No capability change occurs |
+| SEC-015 | Security | Secret exfiltration prompt | Secrets absent from model context/output/tool args |
+| SEC-016 | Security | Data-directory permissions | Unsafe production permissions fail readiness |
+| PERF-001 | Performance | End speech to final transcript | Meets allocated STT segment budget on reference host |
+| PERF-002 | Performance | End speech to first local audio | Warm local route p95 is under 1.5 seconds on reference host |
+| DEP-001 | Deployment | Fresh host install | Documented install reaches healthy status |
+| DEP-002 | Deployment | Same-origin routing | Web, REST, and WebSocket work under one HTTPS origin |
+| DEP-003 | Security | Public/LAN exposure scan | No unintended unauthenticated listener is reachable |
+| DEP-004 | Deployment | Tailscale mobile access | Authenticated supported mobile browser connects over HTTPS |
+| DEP-005 | Deployment | Process restart | Services recover without duplicate jobs or corrupt turns |
+| DEP-006 | Recovery | SQLite backup/restore | Restored database passes integrity and current migration checks |
+| DEP-007 | Recovery | Chroma restore/rebuild | Semantic search recovers from backup or SQLite rebuild |
+| DEP-008 | Deployment | Upgrade migration | Backup, migrate, smoke test, and rollback procedure are proven |
+| DEP-009 | Security | Local mode egress | No ElevenLabs request or unintended cloud egress occurs |
+| DEP-010 | Recovery | Dependency outage | Ollama/Chroma/ElevenLabs/Piper outage states and recovery are correct |
+
+## 13. Release Gates
+
+### Milestone Gate
+
+- All tests directly referenced by the milestone pass.
+- No unresolved severity-1 defect in milestone scope.
+- Any skipped test has a recorded reason, owner, and expiry.
+
+### Private v1 Gate
+
+- All authentication, capability, confirmation, hard-delete, redaction, backup/restore, and Tailscale security tests pass.
+- `PERF-002` meets the PRD target on the declared reference hardware for the warm local path.
+- Critical mobile/desktop manual tests pass on the documented support matrix.
+- Unsupported native capabilities are visibly labeled and cannot be invoked.
+- No Critical risk is unaccepted; no High risk lacks an active mitigation and owner.
