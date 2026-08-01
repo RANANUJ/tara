@@ -20,6 +20,9 @@ class SafetyStore(Protocol):
         status: ConfirmationStatus,
         occurred_at: datetime,
         audit_event: AuditEvent,
+        *,
+        owner_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> PendingConfirmation | None: ...
 
     async def consume_confirmation(
@@ -28,4 +31,9 @@ class SafetyStore(Protocol):
         request_hash: str,
         occurred_at: datetime,
         audit_event: AuditEvent,
+        *,
+        owner_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> bool: ...
+
+    async def publish(self, event: AuditEvent) -> None: ...

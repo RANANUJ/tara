@@ -178,6 +178,8 @@ class PendingConfirmation:
     status: ConfirmationStatus
     expires_at: datetime
     created_at: datetime
+    owner_id: UUID | None = None
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +187,8 @@ class ConfirmationAuthorization:
     confirmation_id: UUID
     request_hash: str
     expires_at: datetime
+    owner_id: UUID | None = None
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

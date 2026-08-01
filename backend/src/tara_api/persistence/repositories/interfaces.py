@@ -142,6 +142,8 @@ class ConfirmationRepository(Protocol):
         confirmation_id: UUID | None = None,
         conversation_id: UUID | None = None,
         permission_setting_id: UUID | None = None,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> PendingConfirmationRecord: ...
 
     async def get_by_id(self, confirmation_id: UUID) -> PendingConfirmationRecord | None: ...
@@ -163,6 +165,9 @@ class ConfirmationRepository(Protocol):
         confirmation_id: UUID,
         status: ConfirmationStatus,
         occurred_at: datetime,
+        *,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> PendingConfirmationRecord | None: ...
 
     async def consume_approved(
@@ -170,6 +175,9 @@ class ConfirmationRepository(Protocol):
         confirmation_id: UUID,
         action_hash: str,
         consumed_at: datetime,
+        *,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> ConfirmationConsumptionRecord | None: ...
 
     async def delete(self, confirmation_id: UUID) -> bool: ...

@@ -28,6 +28,8 @@ class SqlAlchemySafetyStore:
                 confirmation.request_hash,
                 confirmation.expires_at,
                 confirmation_id=confirmation.id,
+                owner_id=confirmation.owner_id,
+                owner_session_id=confirmation.session_id,
             )
             await self._publish_in_transaction(unit_of_work.audit_events, audit_event)
 
@@ -42,12 +44,17 @@ class SqlAlchemySafetyStore:
         status: ConfirmationStatus,
         occurred_at: datetime,
         audit_event: AuditEvent,
+        *,
+        owner_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> PendingConfirmation | None:
         async with self._database.unit_of_work() as unit_of_work:
             record = await unit_of_work.confirmations.transition(
                 confirmation_id,
                 PersistenceConfirmationStatus(status.value),
                 occurred_at,
+                owner_id=owner_id,
+                owner_session_id=session_id,
             )
             if record is not None:
                 await self._publish_in_transaction(unit_of_work.audit_events, audit_event)
@@ -59,12 +66,17 @@ class SqlAlchemySafetyStore:
         request_hash: str,
         occurred_at: datetime,
         audit_event: AuditEvent,
+        *,
+        owner_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> bool:
         async with self._database.unit_of_work() as unit_of_work:
             record = await unit_of_work.confirmations.consume_approved(
                 confirmation_id,
                 request_hash,
                 occurred_at,
+                owner_id=owner_id,
+                owner_session_id=session_id,
             )
             if record is None:
                 return False
@@ -90,4 +102,6 @@ class SqlAlchemySafetyStore:
             status=ConfirmationStatus(record.status.value),
             expires_at=record.expires_at,
             created_at=record.created_at,
+            owner_id=record.owner_id,
+            session_id=record.owner_session_id,
         )

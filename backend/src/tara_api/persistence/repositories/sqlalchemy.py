@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from tara_api.persistence.models import (
     AuditEventModel,
@@ -121,6 +122,8 @@ def _confirmation_record(model: PendingConfirmationModel) -> PendingConfirmation
         model.id,
         model.conversation_id,
         model.permission_setting_id,
+        model.owner_id,
+        model.owner_session_id,
         model.action_type,
         model.action_summary,
         model.action_hash,
@@ -426,11 +429,15 @@ class SqlAlchemyConfirmationRepository:
         confirmation_id: UUID | None = None,
         conversation_id: UUID | None = None,
         permission_setting_id: UUID | None = None,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> PendingConfirmationRecord:
         model = PendingConfirmationModel(
             id=confirmation_id,
             conversation_id=conversation_id,
             permission_setting_id=permission_setting_id,
+            owner_id=owner_id,
+            owner_session_id=owner_session_id,
             action_type=action_type,
             action_summary=action_summary,
             action_hash=action_hash,
@@ -509,6 +516,9 @@ class SqlAlchemyConfirmationRepository:
         confirmation_id: UUID,
         status: ConfirmationStatus,
         occurred_at: datetime,
+        *,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> PendingConfirmationRecord | None:
         occurred_at_utc = ensure_utc(occurred_at)
         expiry_condition = (
@@ -528,6 +538,7 @@ class SqlAlchemyConfirmationRepository:
                 PendingConfirmationModel.status.in_(eligible_statuses),
                 PendingConfirmationModel.consumed_at.is_(None),
                 expiry_condition,
+                *self._binding_conditions(owner_id, owner_session_id),
             )
             .values(status=status)
             .returning(PendingConfirmationModel)
@@ -540,6 +551,9 @@ class SqlAlchemyConfirmationRepository:
         confirmation_id: UUID,
         action_hash: str,
         consumed_at: datetime,
+        *,
+        owner_id: UUID | None = None,
+        owner_session_id: UUID | None = None,
     ) -> ConfirmationConsumptionRecord | None:
         consumed_at_utc = ensure_utc(consumed_at)
         statement = (
@@ -550,6 +564,7 @@ class SqlAlchemyConfirmationRepository:
                 PendingConfirmationModel.status == ConfirmationStatus.APPROVED,
                 PendingConfirmationModel.consumed_at.is_(None),
                 PendingConfirmationModel.expires_at > consumed_at_utc,
+                *self._binding_conditions(owner_id, owner_session_id),
             )
             .values(status=ConfirmationStatus.EXECUTING, consumed_at=consumed_at_utc)
             .returning(PendingConfirmationModel.id)
@@ -565,6 +580,17 @@ class SqlAlchemyConfirmationRepository:
         self._session.add(consumption)
         await self._session.flush()
         return _consumption_record(consumption)
+
+    @staticmethod
+    def _binding_conditions(owner_id: UUID | None, owner_session_id: UUID | None) -> tuple[ColumnElement[bool], ...]:
+        if owner_id is None and owner_session_id is None:
+            return ()
+        if owner_id is None or owner_session_id is None:
+            raise ValueError("confirmation binding requires owner and session")
+        return (
+            PendingConfirmationModel.owner_id == owner_id,
+            PendingConfirmationModel.owner_session_id == owner_session_id,
+        )
 
     async def delete(self, confirmation_id: UUID) -> bool:
         result = await self._session.execute(delete(PendingConfirmationModel).where(PendingConfirmationModel.id == confirmation_id))

@@ -97,6 +97,10 @@ class AuthenticationService:
             raise AuthenticationError
         return context
 
+    async def is_context_active(self, context: AuthenticatedOwnerContext) -> bool:
+        session = await self._sessions.is_active(context.owner.id, context.session.id, self._now())
+        return session is not None and session.last_used_at + self._idle_ttl > self._now()
+
     async def logout(self, context: AuthenticatedOwnerContext) -> None:
         await self._sessions.revoke(context.owner.id, context.session.id, self._now())
 

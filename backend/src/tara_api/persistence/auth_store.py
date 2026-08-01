@@ -60,6 +60,18 @@ class SqlAlchemyAuthenticationStore:
                 session_model.last_used_at = now
             return AuthenticatedOwnerContext(self._owner(owner_model), self._session(session_model))
 
+    async def is_active(self, owner_id: UUID, session_id: UUID, now: datetime) -> OwnerSession | None:
+        async with self._database.session() as session:
+            model = await session.scalar(
+                select(OwnerSessionModel).where(
+                    OwnerSessionModel.id == session_id,
+                    OwnerSessionModel.owner_id == owner_id,
+                    OwnerSessionModel.revoked_at.is_(None),
+                    OwnerSessionModel.expires_at > now,
+                )
+            )
+        return self._session(model) if model else None
+
     async def revoke(self, owner_id: UUID, session_id: UUID, now: datetime) -> bool:
         async with self._database.session() as session, session.begin():
             result = await session.execute(update(OwnerSessionModel).where(OwnerSessionModel.id == session_id, OwnerSessionModel.owner_id == owner_id, OwnerSessionModel.revoked_at.is_(None)).values(revoked_at=now))

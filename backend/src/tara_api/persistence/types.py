@@ -165,6 +165,8 @@ class PendingConfirmationRecord:
     id: UUID
     conversation_id: UUID | None
     permission_setting_id: UUID | None
+    owner_id: UUID | None
+    owner_session_id: UUID | None
     action_type: str
     action_summary: str
     action_hash: str

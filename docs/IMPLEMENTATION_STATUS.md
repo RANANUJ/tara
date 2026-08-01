@@ -6,7 +6,7 @@ Status date: 2026-08-01
 
 Current phase: M4 — Owner Bootstrap and Session Authentication complete.
 
-Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating only. No authentication, semantic retrieval, AI, voice, WebSocket, product screen, or real device action has been implemented.
+Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating. M4 adds single-owner authentication and session-bound internal confirmations. No semantic retrieval, AI, voice, WebSocket, product screen, or real device action has been implemented.
 
 ## 2. Milestone Status
 
@@ -16,7 +16,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M1 — Repository and Toolchain Foundation | Complete | Monorepo, frontend/backend tooling, health scaffolding, CI, and bootstrap tests pass; see M1 evidence below |
 | M2 — Backend Persistence Foundation | Complete | Async SQLAlchemy persistence, the reproducible initial Alembic migration, isolated SQLite tests, and database-aware readiness pass; see M2 evidence below |
 | M3 — Core Domain and Safety Foundation | Complete | Framework-independent domain contracts, default-deny permissions, deterministic confirmation, central tool gating, persistence adapter, and safety tests pass; see M3 evidence below |
-| M4 — Owner Bootstrap and Session Authentication | Not started | No authentication exists |
+| M4 — Owner Bootstrap and Session Authentication | Complete | Single-owner authentication, revocable opaque sessions, and owner/session-bound one-time confirmations pass; see M4 evidence below |
 | M5 — Health, Status, and Error Framework | Not started | M1 has only liveness/readiness scaffolding; no dependency status framework or product error handling exists |
 | M6 — Authenticated WebSocket Transport | Not started | No WebSocket exists |
 | M7 — Foreground Audio Capture and VAD | Not started | No audio pipeline exists |
@@ -41,7 +41,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | Backend architecture | Defined | M3 framework-independent domain/safety services plus M2 persistence adapter; no product API or real tools |
 | AI and voice architecture | Defined | Not started |
 | Memory architecture | Defined | M3 structured-memory domain contract plus M2 durable records only; no ChromaDB, semantic retrieval, consolidation, or product API |
-| Authentication architecture | Defined | Not started |
+| Authentication architecture | Defined | M4 single-owner bootstrap, opaque sessions, revocation, and session-bound internal confirmation contracts |
 | WebSocket architecture | Defined | Not started |
 | API strategy and contract | Defined | M2 keeps the two approved health endpoints and adds safe database dependency reporting to readiness only |
 | Design system and component hierarchy | Defined | Not started |
@@ -50,7 +50,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | Logging and observability | Defined | M1 structured JSON logging and secret-redaction foundation only |
 | Deployment and operations | Defined | Not started |
 | Coding/naming/folder standards | Defined | Not started |
-| Security model | Defined | M3 deterministic deny-by-default permission, action policy, one-time confirmation, tool-gating, and redacted audit foundations |
+| Security model | Defined | M4 adds authenticated owner/session binding to deterministic one-time confirmation and redacted audit foundations |
 | Testing strategy and matrices | Defined | M1 frontend render test and backend health/settings/logging tests created and run |
 
 ## 4. Product Requirement Disposition
@@ -100,28 +100,30 @@ When implementation is authorized:
 
 - Added single-owner bootstrap, normalized email/password validation, Argon2id password hashing, opaque bearer sessions, generic login failures, local rate-limiting seam, and authenticated session/logout/revocation routes.
 - Added M4 migration `20260801_0002_owner_authentication.py` with singleton owner constraint, password-hash-only storage, token-hash-only sessions, and lookup/expiry indexes.
+- Added M4 migration `20260801_0003_confirmation_session_binding.py` with nullable compatibility columns, foreign keys, and owner/session/status/expiry lookup index for authenticated confirmation binding.
 - Added framework-independent owner/session contracts, authentication service, and internal SQLAlchemy adapter. No AI, WebSocket, voice, frontend product UI, real tool, or device action was added.
 - M4 audit fixed nullable bearer-token serialization in session list responses, changed rate-limit keys to one-way email digests, made Argon2id explicit, added redacted login audit events, and routed session management through the authentication service.
+- Bound authenticated confirmation creation, response, and one-time consumption to the originating owner/session; cross-session, revoked, expired, modified, replayed, and reused requests are denied and safely audited. The M3 unbound path remains an explicitly named internal test seam only.
 
 ### Files Changed
 
 - Authentication: `backend/src/tara_api/auth`, `backend/src/tara_api/domain/auth.py`, and `backend/src/tara_api/api/v1/auth.py`.
-- Persistence: `backend/src/tara_api/persistence/auth_store.py`, owner/session ORM models, and `backend/migrations/versions/20260801_0002_owner_authentication.py`.
-- Configuration/tests/docs: `backend/pyproject.toml`, `backend/src/tara_api/main.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/auth`, `docs/SECURITY_MODEL.md`, and `docs/API_CONTRACT.md`.
+- Persistence and safety: `backend/src/tara_api/persistence/auth_store.py`, `backend/src/tara_api/persistence/safety_store.py`, confirmation repository contracts/implementation/types, owner/session ORM models, `backend/src/tara_api/safety/confirmations.py`, `backend/src/tara_api/safety/store.py`, and `backend/migrations/versions/20260801_0003_confirmation_session_binding.py`.
+- Domain/tests/docs: `backend/src/tara_api/domain/auth.py`, `backend/src/tara_api/domain/models.py`, `backend/tests/auth/test_confirmation_session_binding.py`, `docs/SECURITY_MODEL.md`, and `docs/API_CONTRACT.md`.
 
 ### Commands Run and Results
 
 | Command | Result |
 |---|---|
-| `python -m pytest backend/tests/auth -q` | Passed: 9 focused auth tests; 1 expected session-binding limitation |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/auth/test_confirmation_session_binding.py backend/tests/test_safety.py -q` | Passed: 13 focused confirmation/safety tests |
 | `python -m ruff check backend` | Passed |
 | `python -m mypy backend/src` | Passed: 39 source files |
-| `python -m pytest backend/tests -q` | Passed: 30 tests; 1 expected session-binding limitation and one existing upstream warning |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 33 tests; one existing upstream warning |
 | `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend validation |
 
 ### Unresolved Blockers
 
-Confirmation-to-session binding is not implemented because M3 confirmation records have no owner/session columns; the focused test is explicitly expected to fail until a reviewed schema extension binds challenges to authenticated sessions. Bearer tokens remain API-first; browser integration must prefer HttpOnly SameSite cookies or short-lived in-memory credentials.
+None for M4. Bearer tokens remain API-first; a future browser integration must prefer HttpOnly SameSite cookies or a short-lived in-memory credential strategy.
 
 ### Exact Recommended Next Milestone
 
