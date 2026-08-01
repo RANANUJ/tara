@@ -1,5 +1,12 @@
 # Tara Implementation Status
 
+## M8D1 Progress — STT Health, Readiness, and Authenticated Status
+
+- Added safe STT health snapshots and registered STT as an M5 dependency with required/optional severity. Readiness performs no model load, inference, download, or network operation.
+- Authenticated `/api/v1/status` now returns safe configured/provider/state/readiness/model-loaded/language/partial/queue-limit fields. Disabled STT and unavailable optional STT preserve overall readiness; required unavailable STT fails readiness.
+- Validation: M5/STT focused regression set passed (25 tests); Ruff and mypy passed (59 source files); full backend passed (92 tests, one existing upstream warning). No model download or internet access occurred.
+- Remaining work: M8D2 — M8 Documentation, Security Audit, and Final Acceptance. Do not begin M8D2 or M9.
+
 ## M8C Progress — WebSocket Transcript Events
 
 - Added bounded job-runner publication for `transcript.started`, ordered provider-backed `transcript.partial`, one terminal `transcript.final`, `transcript.canceled`, and safe `transcript.error` codes through the existing authenticated connection publisher seam.

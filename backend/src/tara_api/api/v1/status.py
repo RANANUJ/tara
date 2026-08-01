@@ -31,6 +31,7 @@ class StatusResponse(BaseModel):
     state: str
     dependencies: list[StatusDependency]
     features: dict[str, bool]
+    stt: dict[str, object]
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -40,6 +41,7 @@ async def service_status(
 ) -> StatusResponse:
     provider: ApplicationStatusProvider = request.app.state.status_provider
     snapshot = await provider.snapshot()
+    stt = await request.app.state.stt_health.snapshot()
     return StatusResponse(
         application_name=snapshot.application_name,
         version=snapshot.version,
@@ -60,4 +62,10 @@ async def service_status(
             for item in snapshot.dependencies
         ],
         features=snapshot.features,
+        stt={
+            "stt_configured": stt.configured, "stt_required": stt.required, "stt_provider": stt.provider, "stt_state": stt.state,
+            "stt_ready": stt.ready, "stt_model_loaded": stt.model_loaded, "stt_language_mode": stt.language_mode,
+            "stt_partial_mode": stt.partial_mode, "stt_queue_depth": stt.queue_depth, "stt_active_jobs": stt.active_jobs,
+            "stt_max_queue": stt.max_queue, "stt_max_concurrency": stt.max_concurrency,
+        },
     )

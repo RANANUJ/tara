@@ -30,7 +30,7 @@ class SttHealthSnapshot:
 
 
 class SttHealthProvider:
-    def __init__(self, provider: SpeechToTextProvider | None, jobs: InMemoryTranscriptionJobs | None, *, required: bool, environment: str, language_mode: str, partial_mode: str, max_queue: int, max_concurrency: int, timeout_seconds: float) -> None:
+    def __init__(self, provider: SpeechToTextProvider | None, jobs: InMemoryTranscriptionJobs | None, *, required: bool, environment: str, language_mode: str, partial_mode: str, max_queue: int, max_concurrency: int, timeout_seconds: float) -> None:  # noqa: E501
         self._provider, self._jobs, self._required, self._environment = provider, jobs, required, environment
         self._language_mode, self._partial_mode, self._max_queue, self._max_concurrency, self._timeout = language_mode, partial_mode, max_queue, max_concurrency, timeout_seconds
 
@@ -58,5 +58,6 @@ class SttHealthProvider:
 
     def _result(self, configured: bool, state: str, ready: bool, loaded: bool, code: str | None, checked: datetime, started: float, queued: int, active: int) -> SttHealthSnapshot:
         provider = self._provider.name if self._provider else "disabled"
-        if provider == "fake": provider = "fake-development"
-        return SttHealthSnapshot(configured, self._required, provider, state, ready, loaded, self._language_mode, self._partial_mode, queued, active, self._max_queue, self._max_concurrency, code, checked, max(0, round((time.monotonic() - started) * 1000)))
+        if provider == "fake":
+            provider = "fake-development"
+        return SttHealthSnapshot(configured, self._required, provider, state, ready, loaded, self._language_mode, self._partial_mode, queued, active, self._max_queue, self._max_concurrency, code, checked, max(0, round((time.monotonic() - started) * 1000)))  # noqa: E501

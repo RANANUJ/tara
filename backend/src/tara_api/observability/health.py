@@ -92,7 +92,7 @@ class DependencyHealthRegistry:
         return HealthCheckResult(check.name, state, check.severity, checked_at, latency_ms, diagnostic, self._last_success.get(check.name))
 
 
-def implemented_health_checks(database: Database) -> tuple[HealthCheck, ...]:
+def implemented_health_checks(database: Database, stt_check: HealthCheck | None = None) -> tuple[HealthCheck, ...]:
     async def application() -> tuple[HealthState, str | None]:
         return HealthState.HEALTHY, None
 
@@ -115,9 +115,10 @@ def implemented_health_checks(database: Database) -> tuple[HealthCheck, ...]:
             return HealthState.UNAVAILABLE, "Schema status is unavailable."
         return (HealthState.HEALTHY, None) if revision == "20260801_0003" else (HealthState.DEGRADED, "Schema revision is not current.")
 
-    return (
+    checks: tuple[HealthCheck, ...] = (
         CallableHealthCheck(DependencyName.APPLICATION, HealthSeverity.REQUIRED, application),
         CallableHealthCheck(DependencyName.DATABASE, HealthSeverity.REQUIRED, database_check),
         CallableHealthCheck(DependencyName.AUTHENTICATION, HealthSeverity.REQUIRED, authentication),
         CallableHealthCheck(DependencyName.SCHEMA, HealthSeverity.OPTIONAL, schema),
     )
+    return checks + ((stt_check,) if stt_check else ())
