@@ -1,0 +1,50 @@
+"""Environment-backed settings for the Tara backend bootstrap."""
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Environment = Literal["development", "test", "production"]
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+class Settings(BaseSettings):
+    """Load non-product configuration from environment variables or a local .env file."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="TARA_",
+        extra="ignore",
+    )
+
+    app_name: str = "Tara API"
+    environment: Environment = "development"
+    log_level: LogLevel = "INFO"
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+    service_secret: SecretStr = SecretStr("")
+
+    def secret_values(self) -> tuple[str, ...]:
+        """Return configured secrets for log redaction without exposing them to callers."""
+        secret = self.service_secret.get_secret_value()
+        return (secret,) if secret else ()
+
+    def logging_context(self) -> dict[str, object]:
+        """Return settings suitable for structured logging after formatter redaction."""
+        return {
+            "app_name": self.app_name,
+            "environment": self.environment,
+            "log_level": self.log_level,
+            "host": self.host,
+            "port": self.port,
+            "service_secret": self.service_secret,
+        }
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return cached process settings loaded from the environment."""
+    return Settings()

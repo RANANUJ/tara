@@ -1,0 +1,18 @@
+{
+  "name": "tara",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev:frontend": "pnpm --dir frontend dev",
+    "build:frontend": "pnpm --dir frontend build",
+    "lint:frontend": "pnpm --dir frontend lint",
+    "typecheck:frontend": "pnpm --dir frontend typecheck",
+    "test:frontend": "pnpm --dir frontend test",
+    "dev:backend": "python -m uvicorn tara_api.main:app --app-dir backend/src --host 127.0.0.1 --port 8000 --reload",
+    "lint:backend": "python -m ruff check backend",
+    "typecheck:backend": "python -m mypy backend/src",
+    "test:backend": "python -m pytest backend/tests",
+    "validate": "pnpm lint:frontend && pnpm typecheck:frontend && pnpm test:frontend && pnpm build:frontend && pnpm lint:backend && pnpm typecheck:backend && pnpm test:backend"
+  }
+}
