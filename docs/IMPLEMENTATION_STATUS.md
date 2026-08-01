@@ -1,5 +1,45 @@
 # Tara Implementation Status
 
+## M8D2 Final-Acceptance Audit — Blocked on Pre-existing Validation Environment Issues
+
+### Completed M8 Scope
+
+- Audited and corrected M8's live-registry lifecycle: the app now owns one bounded STT registry, status reads its real queued/active counts, transcript publication rechecks owner/session/connection identity, and disconnect/session invalidation cancel matching jobs.
+- Corrected optional STT readiness to degrade status without failing readiness; required unavailable STT remains unavailable.
+- Corrected terminal provider-without-final behavior to emit only a sanitized `provider_failure` event, and prune terminal records on later submission to preserve bounded in-memory state.
+- Added M8 contract, security, offline-test policy, local setup, configuration, and pending manual-test documentation. Faster-whisper remains optional, explicit-local-model-only, no-auto-download, and final-only; the deterministic fake provider remains development/test-only.
+
+### Files Changed
+
+- Runtime and safety: `backend/src/tara_api/main.py`, `backend/src/tara_api/api/v1/websocket.py`, `backend/src/tara_api/stt/health.py`, and `backend/src/tara_api/stt/service.py`.
+- M8 evidence: `backend/tests/stt/test_stt_health.py`, `backend/tests/stt/test_transcription_cleanup.py`, `backend/tests/stt/test_transcription_queue.py`, `backend/tests/stt/test_transcription_websocket.py`, and `backend/tests/test_m5_framework.py`.
+- Documentation and setup: `backend/.env.example`, `backend/README.md`, `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, `docs/MANUAL_TESTS.md`, and this status document.
+
+### Commands and Results
+
+| Command | Result |
+|---|---|
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/stt -q` | Passed: 25 tests; one existing FastAPI/Starlette warning |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/audio -q` | Passed: 29 tests; one existing FastAPI/Starlette warning |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_websocket_transport.py backend/tests/test_m5_framework.py backend/tests/test_health.py backend/tests/test_readiness.py backend/tests/auth backend/tests/test_migrations.py -q` | Passed: 27 tests; one existing FastAPI/Starlette warning |
+| `backend/.venv/Scripts/python.exe -m ruff check backend` | Passed |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q --basetemp <writable Codex temp> -p no:cacheprovider` | Passed: 99 tests; 0 skipped, 0 xfailed, 0 failed; one existing FastAPI/Starlette warning |
+| `npm.cmd run lint`, `npm.cmd run typecheck`, `npm.cmd run test` in `frontend` | Passed; 8 frontend tests |
+| `npm.cmd run build` in `frontend` | Produced `.next` build artifacts but did not exit within 240 seconds; no compiler error emitted |
+| `backend/.venv/Scripts/python.exe -m mypy backend/src` | Blocked by 3 pre-existing M5 errors in `backend/src/tara_api/api/middleware.py` and `backend/src/tara_api/api/v1/auth.py`; M8's import error was fixed |
+| `pnpm validate` | Not runnable: `pnpm` is not installed in this shell |
+
+No M8 test downloaded a model, accessed the internet, required GPU hardware, or used a real faster-whisper model. No M9 files or behavior were added.
+
+### Remaining Blockers
+
+- M8 cannot honestly be marked Complete until the unrelated M5 mypy baseline errors are resolved or explicitly waived and the frontend production build exits successfully in this environment. The initial elevated full-test run also left the system pytest Temp directory inaccessible; the final 99-test run succeeded with a writable isolated base directory.
+- Manual M8 local-model checks in `docs/MANUAL_TESTS.md` remain pending. The registry is intentionally process-local and requires a separately reviewed shared queue for multi-process deployment.
+
+### Exact Recommended Next Milestone
+
+Resolve the recorded validation-environment and baseline typing blockers, rerun M8D2 final acceptance, and only then begin M9 — Local Text Agent Loop. Do not begin M9 now.
+
 ## M8D1 Progress — STT Health, Readiness, and Authenticated Status
 
 - Added safe STT health snapshots and registered STT as an M5 dependency with required/optional severity. Readiness performs no model load, inference, download, or network operation.
@@ -49,7 +89,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M5 — Health, Status, and Error Framework | Complete | Bounded dependency registry, authenticated safe status, standardized correlated errors, and structured request logging pass; see M5 evidence below |
 | M6 — Authenticated WebSocket Transport | Complete | Hash-only single-use tickets, strict v1 JSON session transport, bounded lifecycle, and regression tests pass; see M6 evidence below |
 | M7 — Foreground Audio Capture and VAD | Complete | Foreground-only canonical PCM framing, one audio session per connection, deterministic VAD events, and tests pass |
-| M8 — Streaming Speech-to-Text | Not started | faster-whisper not integrated |
+| M8 — Streaming Speech-to-Text | In final acceptance | Implementation and focused/full tests pass; final completion is blocked only by recorded baseline/environment validation issues |
 | M9 — Local Text Agent Loop | Not started | Ollama not integrated |
 | M10 — Streaming TTS and Barge-In | Not started | ElevenLabs/Piper not integrated |
 | M11 — Structured and Semantic Memory | Not started | SQLite/ChromaDB memory not implemented |

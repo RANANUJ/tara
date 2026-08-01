@@ -88,6 +88,9 @@ def test_validation_and_status_are_safe_and_authenticated(client: TestClient) ->
     body = status.json()
     assert body["uptime_ms"] >= 0
     assert body["features"] == {"database_persistence": True, "owner_authentication": True, "session_management": True, "websocket_transport": True}
+    assert body["stt"]["stt_provider"] == "fake-development"
+    assert body["stt"]["stt_queue_depth"] == 0
+    assert body["stt"]["stt_active_jobs"] == 0
     rendered = str(body).lower()
     assert "sqlite" not in rendered
     assert "token" not in rendered

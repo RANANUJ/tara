@@ -373,3 +373,17 @@ Pass: sensitive canaries are absent; required correlation/status metadata remain
 - Accessibility, backup/restore, migration, and diagnostics privacy have passed.
 - Measured latency, test hardware, model versions, and known deviations are recorded.
 - No unsupported locked-screen, native phone action, or system-tray behavior is presented as implemented.
+
+## 13. M8 Local STT Checks (Pending)
+
+The following checks are pending and must not be marked passed until performed on the declared local host. They require `backend[stt]`, an explicitly provisioned local faster-whisper model outside the repository, and a CPU-first configuration before any optional CUDA validation.
+
+- Start with `TARA_STT_PROVIDER=disabled`; verify authenticated status safely reports disabled STT and readiness remains available when STT is optional.
+- Start with an unavailable optional local model, then with `TARA_STT_REQUIRED=true`; verify optional status degrades while required readiness fails without model download.
+- Explicitly load the provisioned local model; record first-load latency, device, compute type, CPU, memory, and no network activity.
+- Transcribe short English, Hindi, and mixed Hindi/English phrases; exercise silence, background noise, too-short utterances, and the maximum-length utterance.
+- Run multiple consecutive turns; cancel queued and active transcription; disconnect during transcription; revoke/expire the session during transcription; and saturate queue limits.
+- Simulate provider unavailability and model-load failure; verify only stable safe client errors are shown.
+- Measure transcription latency and verify a later turn remains responsive after cancellation or timeout.
+- Inspect data and logs: no PCM/audio artifact remains, no transcript appears in normal logs, and authenticated status contains no model path or provider exception.
+- Restart the backend and verify readiness does not trigger a model load, inference, download, or network access.

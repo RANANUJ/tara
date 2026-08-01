@@ -52,8 +52,10 @@ class SttHealthProvider:
 
     async def dependency(self) -> tuple[HealthState, str | None]:
         snapshot = await self.snapshot()
-        if snapshot.ready or not snapshot.required:
+        if snapshot.ready:
             return HealthState.HEALTHY, None
+        if not snapshot.required:
+            return HealthState.DEGRADED, None
         return HealthState.UNAVAILABLE, "STT is unavailable."
 
     def _result(self, configured: bool, state: str, ready: bool, loaded: bool, code: str | None, checked: datetime, started: float, queued: int, active: int) -> SttHealthSnapshot:

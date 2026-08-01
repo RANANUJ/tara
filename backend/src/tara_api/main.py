@@ -19,6 +19,7 @@ from tara_api.auth.security import Argon2idPasswordHasher, SecureSessionTokenGen
 from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings, get_settings
 from tara_api.domain.health import DependencyName, HealthSeverity
+from tara_api.domain.stt import TranscriptionJob
 from tara_api.observability.application import ApplicationStatusProvider
 from tara_api.observability.health import CallableHealthCheck, DependencyHealthRegistry, SystemClock, implemented_health_checks
 from tara_api.observability.logging import configure_logging, log_settings_loaded
@@ -27,7 +28,7 @@ from tara_api.persistence.database import Database
 from tara_api.transport.registry import InMemoryConnectionRegistry, RegistryEventPublisher
 from tara_api.transport.tickets import InMemoryConnectionTicketService
 from tara_api.stt.faster_whisper import FasterWhisperSpeechToTextProvider
-from tara_api.stt.service import FakeSpeechToTextProvider
+from tara_api.stt.service import FakeSpeechToTextProvider, InMemoryTranscriptionJobs
 from tara_api.stt.health import SttHealthProvider
 
 
@@ -77,7 +78,19 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.state.connection_registry = InMemoryConnectionRegistry(resolved_settings.websocket_max_connections_per_session)
     app.state.websocket_event_publisher = RegistryEventPublisher(app.state.connection_registry)
     app.state.stt_provider = None if resolved_settings.stt_provider == "disabled" else FakeSpeechToTextProvider() if resolved_settings.stt_provider == "fake" else FasterWhisperSpeechToTextProvider(resolved_settings.stt_model, resolved_settings.stt_device, resolved_settings.stt_compute_type, language_hint=resolved_settings.stt_language_hint, local_model_directory=resolved_settings.stt_local_model_directory)  # noqa: E501
-    app.state.stt_health = SttHealthProvider(app.state.stt_provider, None, required=resolved_settings.stt_required, environment=resolved_settings.environment, language_mode=resolved_settings.stt_language_hint or "auto", partial_mode=resolved_settings.stt_partial_mode, max_queue=resolved_settings.stt_max_queued_jobs, max_concurrency=resolved_settings.stt_max_concurrent_jobs, timeout_seconds=resolved_settings.stt_health_timeout_ms / 1000)  # noqa: E501
+
+    async def publish_stt_event(job: TranscriptionJob, event_type: str, payload: dict[str, object]) -> None:
+        request = job.request
+        connection = await app.state.connection_registry.get(request.connection_id)
+        if connection is None:
+            return
+        context = connection.context
+        if context.owner_id != request.owner_id or context.session_id != request.session_id or context.connection_id != request.connection_id:
+            return
+        await connection.send_event(event_type, {"transcription_id": str(request.transcription_id), "audio_session_id": str(request.audio_session_id), "turn_id": str(request.turn_id), **payload})
+
+    app.state.stt_jobs = InMemoryTranscriptionJobs(app.state.stt_provider, publish_stt_event, resolved_settings.stt_max_queued_jobs, resolved_settings.stt_max_concurrent_jobs, resolved_settings.stt_timeout_seconds)
+    app.state.stt_health = SttHealthProvider(app.state.stt_provider, app.state.stt_jobs, required=resolved_settings.stt_required, environment=resolved_settings.environment, language_mode=resolved_settings.stt_language_hint or "auto", partial_mode=resolved_settings.stt_partial_mode, max_queue=resolved_settings.stt_max_queued_jobs, max_concurrency=resolved_settings.stt_max_concurrent_jobs, timeout_seconds=resolved_settings.stt_health_timeout_ms / 1000)  # noqa: E501
     app.state.health_registry = DependencyHealthRegistry(
         implemented_health_checks(app.state.database, CallableHealthCheck(DependencyName.STT, HealthSeverity.REQUIRED if resolved_settings.stt_required else HealthSeverity.OPTIONAL, app.state.stt_health.dependency)),
         SystemClock(),

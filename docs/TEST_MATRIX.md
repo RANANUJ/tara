@@ -329,3 +329,17 @@ M7 uses a deterministic local VAD test implementation only. Silero, STT, TTS, a 
 - Critical mobile/desktop manual tests pass on the documented support matrix.
 - Unsupported native capabilities are visibly labeled and cannot be invoked.
 - No Critical risk is unaccepted; no High risk lacks an active mitigation and owner.
+
+## 14. M8 Implemented STT Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| Domain and PCM | Language/confidence bounds, segment ordering, transcript bounds, PCM sample count/duration, malformed PCM rejection | `backend/tests/stt/test_stt_models.py`, `backend/tests/stt/test_audio_preparation.py` |
+| Fake provider | Deterministic local final/partial behavior without external services | `backend/tests/stt/test_fake_provider.py`, `backend/tests/stt/test_transcription_websocket.py` |
+| Faster-whisper boundary | Optional import, lazy single load, local directory requirement, no auto-download, mapped final result, cancellation, timeout, and safe failures with mocked modules only | `backend/tests/stt/test_faster_whisper_adapter.py`, `backend/tests/stt/test_faster_whisper_loading.py` |
+| Job limits and lifecycle | Duplicate-turn suppression, concurrent duplicate request behavior, queue/concurrency/per-connection limits, terminal ordering, timeout/cancellation, and bounded terminal pruning | `backend/tests/stt/test_transcription_jobs.py`, `backend/tests/stt/test_transcription_queue.py`, `backend/tests/stt/test_transcription_cleanup.py`, `backend/tests/stt/test_transcription_websocket.py` |
+| Privacy and isolation | Event payload excludes PCM and credentials; owner/session/connection cancellation checks prevent foreign cancellation | `backend/tests/stt/test_stt_security.py`, `backend/tests/stt/test_transcription_jobs.py` |
+| Health and status | Live shared-registry counts, optional unavailable degradation, authenticated safe status fields, and required/optional readiness regression | `backend/tests/stt/test_stt_health.py`, `backend/tests/test_m5_framework.py`, `backend/tests/test_health.py`, `backend/tests/test_readiness.py` |
+| Regression | Audio transport, ticket/session binding, migrations, backend suite, and frontend validation remain covered by their existing suites | `backend/tests/audio`, `backend/tests/test_websocket_transport.py`, `backend/tests/test_migrations.py`, `frontend/tests` |
+
+All standard M8 tests use fakes or mocked faster-whisper modules. The `stt_integration` marker is reserved for an explicitly provisioned local model and is not part of standard CI or repository validation. No standard M8 test downloads a model, accesses the internet, requires a GPU, or is xfailed.

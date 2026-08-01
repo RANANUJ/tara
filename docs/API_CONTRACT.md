@@ -274,13 +274,13 @@ The server must not treat silence, disconnect, repeated wake phrases, or arbitra
 - `session.hello` is required within 10 seconds by default; events before hello, malformed events, unsupported types, invalid sequence, oversized JSON, and rate-limit violations receive a safe `session.error` then close.
 - Every received event rechecks session validity; idle checks run at a bounded interval and close revoked/expired sessions. Idle connections close after 120 seconds by default.
 - Tickets are one use even when a failed handshake follows exchange. The in-memory ticket and connection registries are process-local; a future multi-process deployment requires a shared reviewed backend.
-- Future `audio.*`, `transcript.*`, `assistant.*`, `confirmation.*`, `tool.*`, and `response.*` families are reserved only. They are not implemented or emitted in M6.
+- M8 adds only the bounded `transcript.*` event family described in section 20. Assistant, confirmation, tool, and response event families remain reserved.
 
 ## 17. Audio Contract
 
 M6 rejects binary frames and implements no audio, speech, transcript, agent, tool, confirmation, or TTS payload. Audio contracts begin no earlier than M7.
 
-M7 extends the authenticated transport with foreground-only audio control events: `audio.session.start`, `audio.format`, `audio.session.stop`, `audio.session.cancel`, and `audio.flush`. After `session.hello`, one active audio session per connection may negotiate only PCM signed 16-bit little-endian, mono, 16 kHz, 20 ms frames (640 payload bytes). Binary frames are exactly 664 bytes: `TAR1` + audio-session UUID + uint32 monotonic sequence + PCM payload. Frames are rejected before processing unless the connection owner session is active, the audio session is negotiated, the UUID matches, and the sequence is strictly next. Raw audio is transient, never buffered, logged, persisted, or returned. A session is capped at 60 seconds and an utterance at 30 seconds; `audio.flush` ends and clears the active session deterministically. Server events are `audio.session.accepted`, `audio.session.stopped`, `vad.speech.started`, `vad.speech.ended`, `vad.turn.completed`, and smoothed/throttled `audio.level` (at most 10 Hz). M7 does not transcribe or emit transcript/assistant/tool events.
+M7 extends the authenticated transport with foreground-only audio control events: `audio.session.start`, `audio.format`, `audio.session.stop`, `audio.session.cancel`, and `audio.flush`. After `session.hello`, one active audio session per connection may negotiate only PCM signed 16-bit little-endian, mono, 16 kHz, 20 ms frames (640 payload bytes). Binary frames are exactly 664 bytes: `TAR1` + audio-session UUID + uint32 monotonic sequence + PCM payload. Frames are rejected before processing unless the connection owner session is active, the audio session is negotiated, the UUID matches, and the sequence is strictly next. Raw audio is transient, never buffered, logged, persisted, or returned. A session is capped at 60 seconds and an utterance at 30 seconds; `audio.flush` ends and clears the active session deterministically. Server events are `audio.session.accepted`, `audio.session.stopped`, `vad.speech.started`, `vad.speech.ended`, `vad.turn.completed`, and smoothed/throttled `audio.level` (at most 10 Hz). M8 consumes completed VAD turns only to emit the bounded transcript events below; it does not emit assistant or tool events.
 
 ## 18. Rate, Size, and Timeout Policy
 
@@ -305,3 +305,25 @@ Ticket endpoint failures use the standard HTTP error envelope. WebSocket failure
 - Adding optional response fields or new event types is backward-compatible.
 - Frontend and backend contract tests must run before either side upgrades independently.
 - Security-sensitive schema changes require review against `SECURITY_MODEL.md`.
+
+## 20. M8 Transcript Contract
+
+M8 is server-side STT only. Every transcript event uses the existing server envelope: `session_id`, monotonic server `sequence`, `type`, and `payload`. The server supplies `transcription_id`, `audio_session_id`, and `turn_id`; client payloads cannot override the authenticated owner, session, or connection binding.
+
+| Event | Payload | Contract |
+|---|---|---|
+| `transcript.started` | transcription, audio-session, and turn IDs | Accepted job has begun preparation. |
+| `transcript.partial` | IDs, `text`, `sequence`, `is_final: false` | Ordered provisional text. The deterministic fake provider may emit these; faster-whisper does not. |
+| `transcript.final` | IDs, `text`, `language`, optional `confidence`, `is_final: true` | Exactly one successful terminal result. Faster-whisper is final-only. |
+| `transcript.canceled` | IDs | Terminal cancellation. No final event follows. |
+| `transcript.error` | IDs and stable `code` | Terminal safe failure; no provider detail, model path, audio, token, or stack trace is returned. |
+
+The normal successful ordering is `transcript.started`, zero or more ordered `transcript.partial` events, then `transcript.final`. A canceled or failed job terminates with `transcript.canceled` or `transcript.error` instead. Late results after cancellation or timeout are discarded.
+
+Clients may send `transcript.cancel` with exactly `{"transcription_id":"UUID"}`. Cancellation succeeds only for the same authenticated owner/session/connection that created the job. Invalid, foreign, terminal, or malformed cancellation requests receive the existing safe transport error path.
+
+The registry rejects work before registration with stable safe codes including `audio_too_short`, `queue_full`, `audio_too_long`, `connection_job_limit`, and `session_job_limit`. Timed-out jobs report `transcription_timeout`; model, malformed-provider, and other provider failures report `provider_failure`. The in-process limits cover total pending jobs, concurrent execution, jobs per connection, jobs per session, audio size, and timeout.
+
+Transcript delivery is isolated by authenticated owner, session, and connection. Jobs are canceled when that connection closes or its session becomes invalid. M8 neither persists raw audio nor transcript text.
+
+Authenticated `GET /api/v1/status` includes a safe `stt` object: configured/required flags, provider label, provider state/readiness/model-loaded state, language and partial modes, queued and active job counts, and configured queue/concurrency limits. STT health never loads a model, transcribes audio, downloads a model, or accesses the network. An unavailable optional provider degrades status but leaves readiness successful; an unavailable required provider makes readiness fail.

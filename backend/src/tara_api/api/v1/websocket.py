@@ -124,10 +124,7 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         websocket,
         ConnectionContext(uuid4(), context.owner.id, context.session.id, 1, websocket_scope_time(), correlation_id),
     )
-    async def publish_transcript(job: object, event_type: str, payload: dict[str, object]) -> None:
-        request = cast(TranscriptionRequest, cast(Any, job).request)
-        await connection.send_event(event_type, {"transcription_id": str(request.transcription_id), "audio_session_id": str(request.audio_session_id), "turn_id": str(request.turn_id), **payload})
-    connection.transcription_jobs = InMemoryTranscriptionJobs(app.state.stt_provider, publish_transcript, settings.stt_max_queued_jobs, settings.stt_max_concurrent_jobs, settings.stt_timeout_seconds)
+    connection.transcription_jobs = cast(InMemoryTranscriptionJobs, app.state.stt_jobs)
     await websocket.accept()
     if not await registry.register(connection):
         await connection.send_event("session.error", {"code": TransportErrorCode.CONNECTION_LIMIT.value, "message": "Connection limit exceeded."})
@@ -144,6 +141,8 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         await _send_error_and_close(connection, TransportErrorCode.INTERNAL_ERROR, "Transport error.", 1011)
     finally:
         connection.clear_audio_session(canceled=True)
+        if connection.transcription_jobs is not None:
+            await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
         await registry.remove(connection.context.connection_id)
         await connection.close(1000, "Closed.")
         _log("websocket_closed", connection=connection, outcome=connection.state.value)
@@ -174,16 +173,19 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             if connection.state != ConnectionState.ACTIVE:
                 return
             if not await authentication.is_owner_session_active(connection.context.owner_id, connection.context.session_id):
+                await _cancel_connection_jobs(connection)
                 await _send_error_and_close(connection, TransportErrorCode.SESSION_INVALIDATED, "Session is no longer active.", 4401)
                 return
             continue
         if isinstance(event, bytes):
             if not await authentication.is_owner_session_active(connection.context.owner_id, connection.context.session_id):
+                await _cancel_connection_jobs(connection)
                 await _send_error_and_close(connection, TransportErrorCode.SESSION_INVALIDATED, "Session is no longer active.", 4401)
                 return
             await _handle_audio_frame(connection, event)
             continue
         if not await authentication.is_owner_session_active(connection.context.owner_id, connection.context.session_id):
+            await _cancel_connection_jobs(connection)
             await _send_error_and_close(connection, TransportErrorCode.SESSION_INVALIDATED, "Session is no longer active.", 4401)
             return
         if not connection.allow_event(settings.websocket_max_events_per_second):
@@ -355,8 +357,13 @@ async def _cancel_transcript(connection: TransportConnection, payload: dict[str,
         await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Transcript cancellation is invalid.", 1008)
         return
     try:
-        canceled = await connection.transcription_jobs.cancel(UUID(str(payload["transcription_id"])), connection.context.connection_id)
+        canceled = await connection.transcription_jobs.cancel(UUID(str(payload["transcription_id"])), connection.context.connection_id, connection.context.owner_id, connection.context.session_id)
     except ValueError:
         canceled = False
     if not canceled:
         await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Transcript cancellation is invalid.", 1008)
+
+
+async def _cancel_connection_jobs(connection: TransportConnection) -> None:
+    if connection.transcription_jobs is not None:
+        await connection.transcription_jobs.cancel_connection(connection.context.connection_id)

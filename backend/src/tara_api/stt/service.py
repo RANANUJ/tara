@@ -82,6 +82,7 @@ class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
             raise ValueError("audio_too_long")
         key = (request.connection_id, request.audio_session_id, request.turn_id)
         async with self._lock:
+            self._prune_terminal_locked()
             existing = self._turns.get(key)
             if existing is not None:
                 return self._jobs[existing]
@@ -143,10 +144,13 @@ class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
 
     async def cleanup_terminal(self) -> None:
         async with self._lock:
-            terminal = [identifier for identifier, job in self._jobs.items() if job.status in TERMINAL_STATES]
-            for identifier in terminal:
-                job = self._jobs.pop(identifier)
-                self._turns.pop((job.request.connection_id, job.request.audio_session_id, job.request.turn_id), None)
+            self._prune_terminal_locked()
+
+    def _prune_terminal_locked(self) -> None:
+        terminal = [identifier for identifier, job in self._jobs.items() if job.status in TERMINAL_STATES]
+        for identifier in terminal:
+            job = self._jobs.pop(identifier)
+            self._turns.pop((job.request.connection_id, job.request.audio_session_id, job.request.turn_id), None)
 
     def _transition(self, job: TranscriptionJob, target: TranscriptionStatus) -> None:
         if job.status == target:
@@ -176,6 +180,7 @@ class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
                             await self._publish(job, "transcript.final", {"text": result.text, "language": result.language.code, "confidence": result.confidence.value if result.confidence else None, "is_final": True})
                             return
                 self._transition(job, TranscriptionStatus.FAILED)
+                await self._publish(job, "transcript.error", {"code": "provider_failure"})
         except asyncio.CancelledError:
             await self._publish(job, "transcript.canceled", {})
             return

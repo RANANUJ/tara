@@ -332,3 +332,14 @@ If suspicious behavior occurs:
 5. Determine whether any action outcome is uncertain and reconcile with the external system.
 6. Restore from a verified backup only after identifying the failure boundary.
 7. Record the incident's architectural lesson in `DECISIONS.md` or `RISKS.md` before re-enabling the capability.
+
+## 18. M8 Speech-to-Text Boundary
+
+- Raw PCM is transient process memory only. M8 persists neither raw audio nor transcript text, and normal information logs contain neither.
+- Every transcription request is bound to the authenticated owner, session, connection, audio session, and turn. The server, not browser payloads, supplies those bindings. Publication rechecks the same owner/session/connection before delivery.
+- `transcript.cancel` is restricted to that exact connection binding. Disconnect and session invalidation cancel matching process-local jobs; terminal or late provider output cannot produce a final transcript after cancellation or timeout.
+- The faster-whisper adapter is optional and loaded only through its explicit lazy load path. It requires an explicitly provisioned local model directory; automatic model download is rejected. Model load and inference run outside the asyncio event loop.
+- Provider failures have stable client codes only. Client events and status omit provider exception text, model filesystem paths, stack traces, raw PCM, bearer tokens, ticket values, and token hashes.
+- The registry applies fixed total-pending, concurrent, per-connection, per-session, audio-size, and timeout limits. Terminal records are pruned during subsequent submissions and can be explicitly cleaned; the registry remains process-local and is not a distributed queue.
+- `fake` is a deterministic test/development provider and configuration rejects it in production. A disabled or unavailable optional provider degrades operational status without blocking readiness; an unavailable required provider blocks readiness.
+- Readiness only asks provider readiness and counts bounded local jobs. It does not load a model, infer, download, or contact the network. Authenticated status exposes safe provider/mode/limit/counter metadata only.
