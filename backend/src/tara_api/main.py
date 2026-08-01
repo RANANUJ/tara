@@ -1,4 +1,5 @@
 """FastAPI application factory for the Tara backend bootstrap."""
+# ruff: noqa: I001
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -24,6 +25,7 @@ from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
 from tara_api.transport.registry import InMemoryConnectionRegistry, RegistryEventPublisher
 from tara_api.transport.tickets import InMemoryConnectionTicketService
+from tara_api.stt.service import FakeSpeechToTextProvider, FasterWhisperSpeechToTextProvider
 
 
 @asynccontextmanager
@@ -71,6 +73,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     )
     app.state.connection_registry = InMemoryConnectionRegistry(resolved_settings.websocket_max_connections_per_session)
     app.state.websocket_event_publisher = RegistryEventPublisher(app.state.connection_registry)
+    app.state.stt_provider = FakeSpeechToTextProvider() if resolved_settings.stt_provider == "fake" else FasterWhisperSpeechToTextProvider(resolved_settings.stt_model, resolved_settings.stt_device, resolved_settings.stt_compute_type)
     app.state.health_registry = DependencyHealthRegistry(
         implemented_health_checks(app.state.database),
         SystemClock(),

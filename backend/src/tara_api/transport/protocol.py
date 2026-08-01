@@ -34,7 +34,7 @@ class EventEnvelope(BaseModel):
     session_id: UUID
     sequence: int = Field(ge=0)
     timestamp: datetime
-    type: str = Field(pattern=r"^(session\.(hello|ping|close)|client\.ack|audio\.(session\.(start|stop|cancel)|format|flush))$")
+    type: str = Field(pattern=r"^(session\.(hello|ping|close)|client\.ack|audio\.(session\.(start|stop|cancel)|format|flush)|transcript\.cancel)$")
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("timestamp")

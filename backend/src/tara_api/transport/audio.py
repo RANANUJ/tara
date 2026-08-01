@@ -93,6 +93,9 @@ class AudioSession:
     utterance_frames: int = 0
     total_frames: int = 0
     level_meter: AudioLevelMeter = field(default_factory=AudioLevelMeter)
+    _pre_speech_pcm: bytearray = field(default_factory=bytearray)
+    _turn_pcm: bytearray = field(default_factory=bytearray)
+    completed_pcm: bytes | None = None
 
     def negotiate(self, audio_format: AudioFormat) -> None:
         audio_format.validate()
@@ -122,6 +125,9 @@ class AudioSession:
             raise ValueError("voice activity detection returned an invalid value")
         events: list[str] = []
         if probability >= 1:
+            self._pre_speech_pcm.extend(frame.payload)
+            if len(self._pre_speech_pcm) > MIN_SPEECH_FRAMES * CANONICAL_FORMAT.frame_bytes:
+                del self._pre_speech_pcm[:-MIN_SPEECH_FRAMES * CANONICAL_FORMAT.frame_bytes]
             self.speech_frames += 1
             self.silence_frames = 0
             self.utterance_frames += 1
@@ -131,22 +137,30 @@ class AudioSession:
                 return events, probability
             if self.state == AudioSessionState.LISTENING and self.speech_frames >= 2:
                 self.state = AudioSessionState.SPEECH_DETECTED
+                self._turn_pcm = bytearray(self._pre_speech_pcm)
                 events.append("vad.speech.started")
             elif self.state == AudioSessionState.END_OF_TURN_PENDING:
                 self.state = AudioSessionState.SPEECH_DETECTED
+            elif self.state == AudioSessionState.SPEECH_DETECTED:
+                self._turn_pcm.extend(frame.payload)
         elif self.state == AudioSessionState.SPEECH_DETECTED:
+            self._turn_pcm.extend(frame.payload)
             self.speech_frames = 0
             self.silence_frames += 1
             if self.silence_frames == 1:
                 self.state = AudioSessionState.END_OF_TURN_PENDING
                 events.append("vad.speech.ended")
         elif self.state == AudioSessionState.END_OF_TURN_PENDING:
+            self._turn_pcm.extend(frame.payload)
             self.silence_frames += 1
             if self.silence_frames >= 40:
                 self.state = AudioSessionState.COMPLETED
+                self.completed_pcm = bytes(self._turn_pcm)
+                self._clear_buffers()
                 events.append("vad.turn.completed")
         else:
             self.speech_frames = 0
+            self._pre_speech_pcm.clear()
         return events, probability
 
     def audio_level(self, probability: float) -> float | None:
@@ -161,13 +175,25 @@ class AudioSession:
         self.state = AudioSessionState.COMPLETED
         events.append("vad.turn.completed")
         self.level_meter.reset()
+        self._clear_buffers()
         return events
 
     def cancel(self) -> None:
         if self.state not in {AudioSessionState.COMPLETED, AudioSessionState.FAILED}:
             self.state = AudioSessionState.CANCELED
         self.level_meter.reset()
+        self._clear_buffers()
 
     def fail(self) -> None:
         self.state = AudioSessionState.FAILED
         self.level_meter.reset()
+        self._clear_buffers()
+
+    def take_completed_pcm(self) -> bytes | None:
+        pcm = self.completed_pcm
+        self.completed_pcm = None
+        return pcm
+
+    def _clear_buffers(self) -> None:
+        self._pre_speech_pcm.clear()
+        self._turn_pcm.clear()

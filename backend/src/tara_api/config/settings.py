@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     websocket_max_connections_per_session: int = Field(default=3, ge=1, le=20)
     websocket_max_events_per_second: int = Field(default=30, ge=1, le=300)
     websocket_max_outgoing_queue: int = Field(default=32, ge=1, le=256)
+    stt_provider: Literal["fake", "faster_whisper", "disabled"] = "fake"
+    stt_model: str = "small"
+    stt_device: str = "cpu"
+    stt_compute_type: str = "int8"
+    stt_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    stt_max_queued_jobs: int = Field(default=8, ge=1, le=64)
+    stt_max_concurrent_jobs: int = Field(default=1, ge=1, le=4)
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""

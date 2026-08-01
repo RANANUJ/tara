@@ -1,4 +1,5 @@
 """M6 authenticated JSON-only WebSocket ticket and session transport."""
+# ruff: noqa: I001
 
 import asyncio
 import json
@@ -24,6 +25,8 @@ from tara_api.transport.audio import MAX_AUDIO_FRAME_BYTES, AudioSession, Determ
 from tara_api.transport.protocol import EventEnvelope, ServerEvent, TransportErrorCode
 from tara_api.transport.registry import InMemoryConnectionRegistry
 from tara_api.transport.tickets import InMemoryConnectionTicketService
+from tara_api.domain.stt import TranscriptionRequest
+from tara_api.stt.service import InMemoryTranscriptionJobs
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger("tara_api")
@@ -45,6 +48,7 @@ class TransportConnection:
         self._event_times: deque[float] = deque()
         self._closed = False
         self.audio_session: AudioSession | None = None
+        self.transcription_jobs: InMemoryTranscriptionJobs | None = None
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int | None = None) -> None:
         event = ServerEvent(
@@ -120,6 +124,10 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         websocket,
         ConnectionContext(uuid4(), context.owner.id, context.session.id, 1, websocket_scope_time(), correlation_id),
     )
+    async def publish_transcript(job: object, event_type: str, payload: dict[str, object]) -> None:
+        request = cast(TranscriptionRequest, cast(Any, job).request)
+        await connection.send_event(event_type, {"transcription_id": str(request.transcription_id), "audio_session_id": str(request.audio_session_id), "turn_id": str(request.turn_id), **payload})
+    connection.transcription_jobs = InMemoryTranscriptionJobs(app.state.stt_provider, publish_transcript, settings.stt_max_queued_jobs, settings.stt_max_concurrent_jobs, settings.stt_timeout_seconds)
     await websocket.accept()
     if not await registry.register(connection):
         await connection.send_event("session.error", {"code": TransportErrorCode.CONNECTION_LIMIT.value, "message": "Connection limit exceeded."})
@@ -202,6 +210,8 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             await _stop_audio(connection, event.type == "audio.session.cancel")
         elif event.type == "audio.flush":
             await _flush_audio(connection)
+        elif event.type == "transcript.cancel":
+            await _cancel_transcript(connection, event.payload)
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
@@ -330,3 +340,23 @@ async def _handle_audio_frame(connection: TransportConnection, data: bytes) -> N
         await connection.send_event("audio.level", {"level": round(smoothed_level, 3)})
     for event_type in events:
         await connection.send_event(event_type, {"audio_session_id": str(connection.audio_session.session_id)})
+        if event_type == "vad.turn.completed":
+            pcm = connection.audio_session.take_completed_pcm()
+            if pcm and connection.transcription_jobs is not None:
+                request = TranscriptionRequest(uuid4(), connection.context.owner_id, connection.context.session_id, connection.context.connection_id, connection.audio_session.session_id, uuid4(), pcm, datetime.now(UTC))
+                try:
+                    await connection.transcription_jobs.submit(request)
+                except ValueError as error:
+                    await connection.send_event("transcript.error", {"audio_session_id": str(connection.audio_session.session_id), "code": str(error)})
+
+
+async def _cancel_transcript(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    if set(payload) != {"transcription_id"} or connection.transcription_jobs is None:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Transcript cancellation is invalid.", 1008)
+        return
+    try:
+        canceled = await connection.transcription_jobs.cancel(UUID(str(payload["transcription_id"])), connection.context.connection_id)
+    except ValueError:
+        canceled = False
+    if not canceled:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Transcript cancellation is invalid.", 1008)
