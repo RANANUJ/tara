@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     llm_output_token_budget: int = Field(default=512, ge=1, le=8192)
     llm_temperature: float = Field(default=0.2, ge=0, le=1)
     llm_streaming: bool = False
+    agent_intent_confidence_threshold: float = Field(default=0.75, gt=0, le=1)
+    agent_context_memory_limit: int = Field(default=8, ge=1, le=100)
+    agent_context_recent_turn_limit: int = Field(default=8, ge=1, le=100)
+    agent_context_memory_item_char_limit: int = Field(default=512, ge=1, le=4096)
+    agent_context_recent_turn_char_limit: int = Field(default=768, ge=1, le=4096)
+    agent_context_total_char_limit: int = Field(default=4096, ge=1, le=12000)
+    agent_context_estimated_token_limit: int = Field(default=1024, ge=1, le=4096)
+    agent_context_allowed_sensitivities: tuple[Literal["normal", "private", "sensitive", "restricted"], ...] = ("normal",)
 
     @model_validator(mode="after")
     def validate_stt(self) -> "Settings":
@@ -80,6 +88,14 @@ class Settings(BaseSettings):
             raise ValueError("Ollama provider requires a model identifier")
         if self.llm_streaming:
             raise ValueError("streaming language-model output is not implemented")
+        if "restricted" in self.agent_context_allowed_sensitivities:
+            raise ValueError("restricted context cannot be enabled")
+        if self.agent_context_memory_item_char_limit > self.agent_context_total_char_limit:
+            raise ValueError("memory context item limit exceeds the total context limit")
+        if self.agent_context_recent_turn_char_limit > self.agent_context_total_char_limit:
+            raise ValueError("recent-turn context item limit exceeds the total context limit")
+        if self.agent_context_total_char_limit > self.agent_context_estimated_token_limit * 4:
+            raise ValueError("context character limit exceeds the estimated token limit")
         return self
 
     def secret_values(self) -> tuple[str, ...]:

@@ -59,6 +59,13 @@ class ConversationTurnRepository(Protocol):
         offset: int = 0,
     ) -> list[ConversationTurnRecord]: ...
 
+    async def list_completed_for_conversation(
+        self,
+        conversation_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ConversationTurnRecord]: ...
+
     async def update_status(
         self,
         turn_id: UUID,
@@ -88,6 +95,13 @@ class StructuredMemoryRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
         category: MemoryCategory | None = None,
+    ) -> list[StructuredMemoryRecord]: ...
+
+    async def list_for_context(
+        self,
+        now: datetime,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[StructuredMemoryRecord]: ...
 
     async def update(

@@ -50,6 +50,40 @@ class IntentCategory(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class IntentReasonCode(StrEnum):
+    """Stable, non-LLM rationale codes for deterministic intent routing."""
+
+    INFORMATIONAL_ACTION = "informational_action"
+    MEMORY_REFERENCE = "memory_reference"
+    READ_ONLY_VERB = "read_only_verb"
+    CONSEQUENTIAL_MESSAGE = "consequential_message"
+    CONSEQUENTIAL_CALL = "consequential_call"
+    CONSEQUENTIAL_DESTRUCTIVE = "consequential_destructive"
+    CONSEQUENTIAL_FINANCIAL = "consequential_financial"
+    CONSEQUENTIAL_EXTERNAL_WRITE = "consequential_external_write"
+    CONSEQUENTIAL_ACCOUNT_SECURITY = "consequential_account_security"
+    QUESTION = "question"
+    CONVERSATIONAL = "conversational"
+    LOW_CONFIDENCE = "low_confidence"
+    UNSUPPORTED = "unsupported"
+
+
+class ContextSensitivity(StrEnum):
+    """Server-controlled context sensitivity labels."""
+
+    NORMAL = "normal"
+    PRIVATE = "private"
+    SENSITIVE = "sensitive"
+    RESTRICTED = "restricted"
+
+
+class ContextSourceKind(StrEnum):
+    """Safe persisted sources permitted in M9B model context."""
+
+    STRUCTURED_MEMORY = "structured_memory"
+    CONVERSATION_TURN = "conversation_turn"
+
+
 class ModelRole(StrEnum):
     SYSTEM = "system"
     USER = "user"
@@ -139,6 +173,124 @@ class IntentClassification:
     def __post_init__(self) -> None:
         if not 0 <= self.confidence <= 1:
             raise ValueError("intent confidence must be between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
+class IntentRoute:
+    """Deterministic routing output; it never authorizes an action."""
+
+    category: IntentCategory
+    confidence: float
+    reason_code: IntentReasonCode
+    clarification: str | None = None
+    consequential_risk: bool = False
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.confidence <= 1:
+            raise ValueError("intent confidence must be between zero and one")
+        if self.consequential_risk != (self.category == IntentCategory.CONSEQUENTIAL_ACTION_REQUEST):
+            raise ValueError("consequential risk must match the intent category")
+        if self.clarification is not None and not self.clarification.strip():
+            raise ValueError("clarification cannot be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSourceMetadata:
+    """Non-secret provenance retained with a selected context item."""
+
+    kind: ContextSourceKind
+    record_id: UUID
+    category: str | None = None
+    pinned: bool = False
+    role: ModelRole | None = None
+    sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.sequence is not None and self.sequence < 0:
+            raise ValueError("context sequence cannot be negative")
+        if self.kind == ContextSourceKind.STRUCTURED_MEMORY and self.role is not None:
+            raise ValueError("memory context cannot have a message role")
+        if self.kind == ContextSourceKind.CONVERSATION_TURN and self.role is None:
+            raise ValueError("conversation context requires a message role")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextItem:
+    """Bounded untrusted content selected for a future prompt."""
+
+    text: str
+    sensitivity: ContextSensitivity
+    source: ContextSourceMetadata
+    truncated: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.text or len(self.text) > MAX_AGENT_INPUT_CHARS:
+            raise ValueError("invalid context item")
+        if self.sensitivity == ContextSensitivity.RESTRICTED:
+            raise ValueError("restricted context cannot be represented for prompting")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextBudget:
+    """Deterministic record, character, and estimated-token limits."""
+
+    memory_limit: int
+    recent_turn_limit: int
+    memory_item_char_limit: int
+    recent_turn_char_limit: int
+    total_char_limit: int
+    estimated_token_limit: int
+
+    def __post_init__(self) -> None:
+        values = (
+            self.memory_limit,
+            self.recent_turn_limit,
+            self.memory_item_char_limit,
+            self.recent_turn_char_limit,
+            self.total_char_limit,
+            self.estimated_token_limit,
+        )
+        if any(value < 1 for value in values):
+            raise ValueError("context budgets must be positive")
+        if self.memory_item_char_limit > self.total_char_limit or self.recent_turn_char_limit > self.total_char_limit:
+            raise ValueError("context item limits cannot exceed the total limit")
+        if self.total_char_limit > self.estimated_token_limit * 4:
+            raise ValueError("context character limit exceeds the estimated token limit")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextRequest:
+    """Server-created request for one authenticated owner's persisted context."""
+
+    owner_id: UUID
+    conversation_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredContext:
+    """Safe, ordered context selected without semantic retrieval."""
+
+    items: tuple[ContextItem, ...]
+    estimated_tokens: int
+    truncated: bool = False
+
+    def __post_init__(self) -> None:
+        if self.estimated_tokens < 0:
+            raise ValueError("estimated tokens cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class PromptBuildResult:
+    """Structured provider-neutral messages with bounded untrusted context."""
+
+    messages: tuple[ModelMessage, ...]
+    estimated_tokens: int
+    context_items_included: int
+    context_truncated: bool
+
+    def __post_init__(self) -> None:
+        if not self.messages or self.estimated_tokens < 1 or self.context_items_included < 0:
+            raise ValueError("invalid prompt build result")
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +416,24 @@ class ModelResponseValidator(Protocol):
 
 class ModelClock(Protocol):
     def now(self) -> datetime: ...
+
+
+class IntentRouter(Protocol):
+    def classify(self, text: str) -> IntentRoute: ...
+
+
+class StructuredContextProvider(Protocol):
+    async def get_context(self, request: ContextRequest) -> StructuredContext: ...
+
+
+class PromptBuilder(Protocol):
+    def build(
+        self,
+        user_text: str,
+        context: StructuredContext,
+        *,
+        model_context_token_budget: int,
+    ) -> PromptBuildResult: ...
 
 
 @dataclass(frozen=True, slots=True)

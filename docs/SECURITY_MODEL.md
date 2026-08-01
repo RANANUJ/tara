@@ -351,3 +351,11 @@ If suspicious behavior occurs:
 - The adapter rejects URL credentials, never runs `ollama pull`, has no cloud fallback, and does not silently substitute the fake provider. The configured model must already exist.
 - Provider failures, malformed responses, and timeouts map to stable typed codes. Client-facing behavior never includes response metadata, provider exception text, URLs, hardware details, stack traces, prompt text, or generated text in normal logs.
 - Readiness is bounded and performs only the local `/api/tags` check; it does not pull, create, or infer with a model. M9A health snapshots are internal only and do not modify global readiness or authenticated status.
+
+## 20. M9B Intent, Prompt, and Structured-Context Boundary
+
+- Intent classification is deterministic and advisory only. A consequential route is a risk marker, not an action proposal, permission grant, confirmation, or authorization. Informational questions about actions remain non-consequential.
+- Prompt construction uses server-owned persona and safety messages, followed by explicitly delimited untrusted persisted context and the user message. M9B provides no tools, tool schemas, hidden reasoning, provider secrets, source references, profile data, or arbitrary client prompt roles.
+- Structured context is server-bound to the authenticated single owner and is retrieved only through non-ORM persistence records. It selects active pinned memories before other active records and completed turns only; it excludes expired memories, failed/pending turns, source references, and unavailable owner scopes.
+- Context is bounded by configured record, per-item character, total character, and estimated-token limits. Selection and truncation are deterministic. No semantic retrieval, ChromaDB, embeddings, or external source retrieval is present.
+- `restricted` context is never promptable. `sensitive` and `private` context remain excluded unless explicitly enabled by server configuration; normal is the sole default. Model-context diagnostics and normal logs continue to exclude full prompt, memory, and transcript content.

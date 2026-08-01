@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -261,6 +261,26 @@ class SqlAlchemyConversationTurnRepository:
         result = await self._session.scalars(statement)
         return [_turn_record(model) for model in result]
 
+    async def list_completed_for_conversation(
+        self,
+        conversation_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ConversationTurnRecord]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(ConversationTurnModel)
+            .where(
+                ConversationTurnModel.conversation_id == conversation_id,
+                ConversationTurnModel.status == ConversationTurnStatus.COMPLETED,
+            )
+            .order_by(ConversationTurnModel.sequence.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self._session.scalars(statement)
+        return [_turn_record(model) for model in result]
+
     async def update_status(
         self,
         turn_id: UUID,
@@ -321,6 +341,32 @@ class SqlAlchemyStructuredMemoryRepository:
         if category is not None:
             statement = statement.where(StructuredMemoryModel.category == category)
         statement = statement.order_by(StructuredMemoryModel.created_at.desc()).offset(offset).limit(limit)
+        result = await self._session.scalars(statement)
+        return [_memory_record(model) for model in result]
+
+    async def list_for_context(
+        self,
+        now: datetime,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StructuredMemoryRecord]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(StructuredMemoryModel)
+            .where(
+                or_(
+                    StructuredMemoryModel.expires_at.is_(None),
+                    StructuredMemoryModel.expires_at > ensure_utc(now),
+                )
+            )
+            .order_by(
+                StructuredMemoryModel.pinned.desc(),
+                StructuredMemoryModel.updated_at.desc(),
+                StructuredMemoryModel.created_at.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
         result = await self._session.scalars(statement)
         return [_memory_record(model) for model in result]
 

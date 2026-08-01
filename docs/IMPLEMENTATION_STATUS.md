@@ -1,5 +1,15 @@
 # Tara Implementation Status
 
+## M9B Progress - Intent Router, Prompt Builder, and Structured Context
+
+- Completed scope: added framework-independent deterministic intent-routing, structured-context, prompt-build, sensitivity, provenance, and budget contracts. Consequential routes are conservative risk markers only; informational questions about actions remain non-consequential.
+- Completed scope: added server-owned persona/safety prompt messages, explicitly untrusted persisted context, and the final user message. Added no tools, hidden reasoning, agent orchestration, model invocation, WebSocket event, user-facing API, semantic retrieval, ChromaDB, TTS, or device capability.
+- Completed scope: added authenticated-owner-bound context selection over existing non-ORM repository records: active pinned structured memories first, then recent completed conversation turns. Context excludes expired memories, non-completed turns, source references, restricted data, and unconfigured private/sensitive data.
+- Files changed: `backend/src/tara_api/domain/agent.py`, `backend/src/tara_api/agent/routing.py`, `backend/src/tara_api/agent/prompt.py`, `backend/src/tara_api/agent/context.py`, `backend/src/tara_api/agent/context_policy.py`, `backend/src/tara_api/persistence/repositories/interfaces.py`, `backend/src/tara_api/persistence/repositories/sqlalchemy.py`, `backend/src/tara_api/config/settings.py`, `backend/.env.example`, `backend/tests/agent/test_intent_router.py`, `backend/tests/agent/test_prompt_builder.py`, `backend/tests/agent/test_context_provider.py`, `backend/tests/agent/test_context_policy.py`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, and this status document.
+- Commands run: focused M9B pytest; Ruff; mypy; all agent tests; full backend pytest; root `pnpm validate`; and `git diff --check`.
+- Test results: focused M9B tests passed (19); Ruff passed; mypy passed (69 source files); all agent tests passed (37); backend suite passed (136); root validation passed frontend lint/typecheck/tests (8), frontend production build, Ruff, mypy, and backend tests (136). The only output warning is the existing upstream `StarletteDeprecationWarning` from `TestClient`; no test skipped, xfailed, or failed.
+- Unresolved blockers: none. M9 remains in progress. Exact recommended next sub-milestone: M9C - Agent Orchestration and Conversation Execution Flow. Do not start M9C as part of M9B.
+
 ## M9A Progress - Agent Domain Contracts, Fake LLM, and Ollama Provider Adapter
 
 - Added framework-independent agent/model contracts, bounded request/response validation, typed provider failures, deterministic fake language-model behavior, final-only Ollama HTTP mapping, and a safe internal provider-health snapshot. No agent orchestration, persistence, WebSocket events, tools, semantic memory, TTS, or product UI was added.

@@ -355,3 +355,14 @@ All standard M8 tests use fakes or mocked faster-whisper modules. The `stt_integ
 | Provider health | Disabled/fake development snapshots, mocked ready/unavailable/timeout Ollama snapshots, and production fake/settings rejection | `backend/tests/agent/test_llm_health.py` |
 
 M9A standard tests use deterministic fakes and `httpx.MockTransport` only. They do not require an Ollama process, model pull, internet access, cloud provider, or GPU hardware.
+
+## 16. M9B Implemented Intent, Prompt, and Context Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| Intent routing | Deterministic category, confidence, reason-code, clarification, and consequential-risk classification; informational action questions remain non-consequential | `backend/tests/agent/test_intent_router.py` |
+| Prompt construction | Server-owned persona/safety messages, explicit untrusted-context delimiters, final user input, bounded deterministic context inclusion, and no tool or hidden-reasoning prompt fields | `backend/tests/agent/test_prompt_builder.py` |
+| Context policy | Normal-only default, explicit private/sensitive enabling, and permanent restricted exclusion | `backend/tests/agent/test_context_policy.py` |
+| Persistence context | Authenticated-owner-bound retrieval, pinned-first active memories, completed turns only, safe provenance metadata, expiry exclusion, deterministic character/token truncation, and no ORM exposure | `backend/tests/agent/test_context_provider.py` |
+
+M9B tests use only the isolated SQLite fixtures and deterministic code paths. They do not invoke an LLM, Ollama process, ChromaDB, network access, tool, WebSocket, or device capability.
