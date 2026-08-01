@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+stt = [
+  "faster-whisper>=1.1,<2.0",
+]
 dev = [
   "httpx>=0.27,<1.0",
   "mypy>=1.13,<2.0",
@@ -36,6 +39,9 @@ packages = ["src/tara_api"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "stt_integration: requires an explicitly installed, locally provisioned faster-whisper model",
+]
 
 [tool.ruff]
 target-version = "py312"

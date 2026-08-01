@@ -39,6 +39,8 @@ data/
 *.sqlite-shm
 recordings/
 models/
+model-cache/
+.cache/huggingface/
 exports/
 logs/
 *.log
