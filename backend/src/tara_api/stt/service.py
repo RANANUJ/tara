@@ -38,11 +38,14 @@ class FakeSession:
 class FakeSpeechToTextProvider:
     name = "fake"
 
+    def __init__(self, outputs: tuple[PartialTranscript | FinalTranscript, ...] | None = None) -> None:
+        self._outputs = outputs or (FinalTranscript("test transcript", TranscriptLanguage("en")),)
+
     async def readiness(self) -> bool:
         return True
 
     async def start(self, _request: TranscriptionRequest) -> SpeechToTextSession:
-        return FakeSession((FinalTranscript("test transcript", TranscriptLanguage("en")),))
+        return FakeSession(self._outputs)
 
 
 Publisher = Callable[[TranscriptionJob, str, dict[str, object]], Awaitable[None]]
@@ -158,6 +161,7 @@ class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
                 if job.status == TranscriptionStatus.CANCELED:
                     return
                 self._transition(job, TranscriptionStatus.PREPARING)
+                await self._publish(job, "transcript.started", {})
                 session = await self._provider.start(job.request)
                 self._transition(job, TranscriptionStatus.TRANSCRIBING)
                 async with asyncio.timeout(self._timeout):
@@ -166,15 +170,20 @@ class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
                             return
                         if isinstance(result, PartialTranscript):
                             self._transition(job, TranscriptionStatus.PARTIAL)
+                            await self._publish(job, "transcript.partial", {"text": result.text, "sequence": result.sequence, "is_final": False})
                         else:
                             self._transition(job, TranscriptionStatus.COMPLETED)
+                            await self._publish(job, "transcript.final", {"text": result.text, "language": result.language.code, "confidence": result.confidence.value if result.confidence else None, "is_final": True})
                             return
                 self._transition(job, TranscriptionStatus.FAILED)
         except asyncio.CancelledError:
+            await self._publish(job, "transcript.canceled", {})
             return
         except TimeoutError:
             if job.status not in TERMINAL_STATES:
                 self._transition(job, TranscriptionStatus.TIMED_OUT)
+                await self._publish(job, "transcript.error", {"code": "transcription_timeout"})
         except Exception:
             if job.status not in TERMINAL_STATES:
                 self._transition(job, TranscriptionStatus.FAILED)
+                await self._publish(job, "transcript.error", {"code": "provider_failure"})

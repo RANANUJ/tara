@@ -1,5 +1,12 @@
 # Tara Implementation Status
 
+## M8C Progress — WebSocket Transcript Events
+
+- Added bounded job-runner publication for `transcript.started`, ordered provider-backed `transcript.partial`, one terminal `transcript.final`, `transcript.canceled`, and safe `transcript.error` codes through the existing authenticated connection publisher seam.
+- Fake STT can now emit deterministic partials; faster-whisper remains final-only. Job cancellation suppresses final delivery and event payloads never contain PCM or session credentials.
+- Added focused lifecycle and privacy tests. Validation: 18 STT tests, Ruff, mypy (58 source files), and the full backend suite (92 passed, one existing upstream warning) passed. No model download or internet access occurred.
+- M8 remains incomplete. Health/status and final M8 acceptance are deferred. Exact next sub-milestone: M8D — STT Health Integration, Documentation, and Final Acceptance. Do not begin it as part of M8C.
+
 ## M8B Progress — Transcription Job Queue, Lifecycle, and Cancellation
 
 - Added a bounded, process-local STT registry with immutable request identity, duplicate completed-turn suppression, explicit transitions, global/per-connection/per-session limits, timeout state, cancellation, session/connection invalidation seams, accurate active/queued counters, and terminal cleanup.
