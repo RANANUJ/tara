@@ -280,6 +280,8 @@ The server must not treat silence, disconnect, repeated wake phrases, or arbitra
 
 M6 rejects binary frames and implements no audio, speech, transcript, agent, tool, confirmation, or TTS payload. Audio contracts begin no earlier than M7.
 
+M7 extends the authenticated transport with foreground-only audio control events: `audio.session.start`, `audio.format`, `audio.session.stop`, `audio.session.cancel`, and `audio.flush`. After `session.hello`, one audio session per connection may negotiate only PCM signed 16-bit little-endian, mono, 16 kHz, 20 ms frames (640 payload bytes). Binary frames use `TAR1` + audio-session UUID + uint32 sequence + PCM payload; raw audio is transient, never logged, persisted, or returned. Server events are `audio.session.accepted`, `audio.session.stopped`, `audio.session.error`, `vad.speech.started`, `vad.speech.ended`, `vad.turn.completed`, and throttled `audio.level`. M7 does not transcribe or emit transcript/assistant/tool events.
+
 ## 18. Rate, Size, and Timeout Policy
 
 Limits are configuration values published where the client needs them. The contract requires bounded values for:

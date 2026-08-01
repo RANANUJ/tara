@@ -16,9 +16,11 @@ from tara_api.api.middleware import CORRELATION_HEADER, select_correlation_id
 from tara_api.api.v1.auth import authenticated_context
 from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings
+from tara_api.domain.audio import AudioFormat
 from tara_api.domain.auth import AuthenticatedOwnerContext
 from tara_api.domain.errors import DependencyUnavailableError
 from tara_api.domain.transport import ConnectionContext, ConnectionState
+from tara_api.transport.audio import AudioSession, DeterministicVad, decode_frame
 from tara_api.transport.protocol import EventEnvelope, ServerEvent, TransportErrorCode
 from tara_api.transport.registry import InMemoryConnectionRegistry
 from tara_api.transport.tickets import InMemoryConnectionTicketService
@@ -42,6 +44,7 @@ class TransportConnection:
         self.last_activity = time.monotonic()
         self._event_times: deque[float] = deque()
         self._closed = False
+        self.audio_session: AudioSession | None = None
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int | None = None) -> None:
         event = ServerEvent(
@@ -130,7 +133,7 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
     if first_event is None:
         await _send_error_and_close(connection, TransportErrorCode.HELLO_TIMEOUT, "Hello timed out.", 1008)
         return
-    if not _valid_event(first_event, connection, -1, "session.hello") or first_event.payload:
+    if isinstance(first_event, bytes) or not _valid_event(first_event, connection, -1, "session.hello") or first_event.payload:
         await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "A valid hello is required.", 1008)
         return
     connection.state = ConnectionState.ACTIVE
@@ -148,6 +151,9 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             if not await authentication.is_owner_session_active(connection.context.owner_id, connection.context.session_id):
                 await _send_error_and_close(connection, TransportErrorCode.SESSION_INVALIDATED, "Session is no longer active.", 4401)
                 return
+            continue
+        if isinstance(event, bytes):
+            await _handle_audio_frame(connection, event)
             continue
         if not await authentication.is_owner_session_active(connection.context.owner_id, connection.context.session_id):
             await _send_error_and_close(connection, TransportErrorCode.SESSION_INVALIDATED, "Session is no longer active.", 4401)
@@ -168,17 +174,31 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             connection.state = ConnectionState.CLOSING
             await connection.send_event("session.closing", {"reason": "Client requested close."})
             await connection.close(1000, "Client requested close.")
+        elif event.type == "audio.session.start":
+            await _start_audio(connection, event.payload)
+        elif event.type == "audio.format":
+            await _negotiate_audio(connection, event.payload)
+        elif event.type in {"audio.session.stop", "audio.session.cancel"}:
+            await _stop_audio(connection, event.type == "audio.session.cancel")
+        elif event.type == "audio.flush" and connection.audio_session is not None:
+            await connection.send_event("audio.session.stopped", {"audio_session_id": str(connection.audio_session.session_id)})
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
 
-async def _receive_event(connection: TransportConnection, timeout: float, max_bytes: int) -> EventEnvelope | None:
+async def _receive_event(connection: TransportConnection, timeout: float, max_bytes: int) -> EventEnvelope | bytes | None:
     try:
         message = await asyncio.wait_for(connection._websocket.receive(), timeout)  # noqa: SLF001
     except TimeoutError:
         return None
     if message["type"] == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", 1000))
+    raw_bytes = message.get("bytes")
+    if isinstance(raw_bytes, bytes):
+        if len(raw_bytes) > max_bytes:
+            await _send_error_and_close(connection, TransportErrorCode.PAYLOAD_TOO_LARGE, "Audio frame is too large.", 1009)
+            return None
+        return raw_bytes
     raw_text = message.get("text")
     if not isinstance(raw_text, str) or len(raw_text.encode("utf-8")) > max_bytes:
         await _send_error_and_close(connection, TransportErrorCode.PAYLOAD_TOO_LARGE, "Message is invalid or too large.", 1009)
@@ -232,3 +252,43 @@ def _event_data(connection: TransportConnection, outcome: str) -> dict[str, obje
 def _log(event: str, connection: TransportConnection | None = None, correlation_id: str | None = None, outcome: str = "") -> None:
     data = _event_data(connection, outcome) if connection else {"correlation_id": correlation_id, "outcome": outcome}
     logger.info(event, extra={"event_data": data})
+
+
+async def _start_audio(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    if set(payload) != {"audio_session_id"} or connection.audio_session is not None:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Audio session start is invalid.", 1008)
+        return
+    try:
+        connection.audio_session = AudioSession(UUID(str(payload["audio_session_id"])))
+    except ValueError:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Audio session start is invalid.", 1008)
+        return
+    await connection.send_event("audio.session.accepted", {"audio_session_id": str(connection.audio_session.session_id)})
+
+
+async def _negotiate_audio(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    if connection.audio_session is None or payload != {"sample_rate": 16000, "sample_width_bytes": 2, "channels": 1, "frame_ms": 20}:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Audio format is unsupported.", 1008)
+        return
+    connection.audio_session.negotiate(AudioFormat())
+
+
+async def _stop_audio(connection: TransportConnection, canceled: bool) -> None:
+    if connection.audio_session is not None:
+        connection.audio_session = None
+    await connection.send_event("audio.session.stopped", {"canceled": canceled})
+
+
+async def _handle_audio_frame(connection: TransportConnection, data: bytes) -> None:
+    if connection.audio_session is None:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Audio session is not active.", 1008)
+        return
+    try:
+        frame = decode_frame(data)
+        events, level = connection.audio_session.ingest(frame, DeterministicVad())
+    except ValueError:
+        await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Audio frame is invalid.", 1008)
+        return
+    await connection.send_event("audio.level", {"level": round(level, 3)})
+    for event_type in events:
+        await connection.send_event(event_type, {"audio_session_id": str(connection.audio_session.session_id)})

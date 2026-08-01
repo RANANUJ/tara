@@ -19,7 +19,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M4 — Owner Bootstrap and Session Authentication | Complete | Single-owner authentication, revocable opaque sessions, and owner/session-bound one-time confirmations pass; see M4 evidence below |
 | M5 — Health, Status, and Error Framework | Complete | Bounded dependency registry, authenticated safe status, standardized correlated errors, and structured request logging pass; see M5 evidence below |
 | M6 — Authenticated WebSocket Transport | Complete | Hash-only single-use tickets, strict v1 JSON session transport, bounded lifecycle, and regression tests pass; see M6 evidence below |
-| M7 — Foreground Audio Capture and VAD | Not started | No audio pipeline exists |
+| M7 — Foreground Audio Capture and VAD | Complete | Foreground-only canonical PCM framing, one audio session per connection, deterministic VAD events, and tests pass |
 | M8 — Streaming Speech-to-Text | Not started | faster-whisper not integrated |
 | M9 — Local Text Agent Loop | Not started | Ollama not integrated |
 | M10 — Streaming TTS and Barge-In | Not started | ElevenLabs/Piper not integrated |
@@ -39,7 +39,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | Complete target folder structure | Defined | M1 root, frontend, backend, contracts, scripts, and CI paths created; later domain paths deferred |
 | Frontend architecture | Defined | M1 static Next.js App Router shell only |
 | Backend architecture | Defined | M3 framework-independent domain/safety services plus M2 persistence adapter; no product API or real tools |
-| AI and voice architecture | Defined | Not started |
+| AI and voice architecture | Defined | M7 foreground-only PCM/VAD transport foundation; no STT, TTS, agent, or background capture |
 | Memory architecture | Defined | M3 structured-memory domain contract plus M2 durable records only; no ChromaDB, semantic retrieval, consolidation, or product API |
 | Authentication architecture | Defined | M4 single-owner bootstrap, opaque sessions, revocation, and session-bound internal confirmation contracts |
 | WebSocket architecture | Defined | M6 authenticated ticket exchange, JSON-only v1 handshake/ping/close/ack, process-local connection registry, and bounded lifecycle |
@@ -312,3 +312,32 @@ None. The upstream `StarletteDeprecationWarning` emitted by FastAPI's current `T
 ### Exact Recommended Next Milestone
 
 M2 — Backend Persistence Foundation. Start with SQLAlchemy session/unit-of-work setup, the initial Alembic baseline, temporary SQLite migration tests, and configuration/data-directory validation. Do not begin M3 or any product feature before M2 exits successfully.
+
+## M7 Completion Evidence
+
+### Completed Scope
+
+- Added canonical transient PCM framing, one negotiated audio session per authenticated WebSocket connection, deterministic VAD transitions, end-of-turn silence handling, and normalized audio-level events.
+- Added typed frontend PCM conversion/framing helpers only. No microphone UI, background capture, STT, TTS, model, memory, tools, or persistence was added.
+
+### Files Changed
+
+- `backend/src/tara_api/domain/audio.py`, `backend/src/tara_api/transport/audio.py`, `backend/src/tara_api/api/v1/websocket.py`, `frontend/lib/audio.ts`, `backend/tests/test_websocket_transport.py`, and `frontend/tests/unit/audio.test.ts`.
+- `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, and `docs/IMPLEMENTATION_STATUS.md`.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `backend/.venv/Scripts/python.exe -m ruff check backend` | Passed |
+| `backend/.venv/Scripts/python.exe -m mypy backend/src` | Passed: 54 source files |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 45 tests; one existing upstream warning |
+| `pnpm validate` | Passed equivalently via frontend lint/typecheck/test/build and backend validation |
+
+### Unresolved Blockers
+
+Silero remains an optional future adapter; M7 uses deterministic VAD only and does not download models.
+
+### Exact Recommended Next Milestone
+
+M8 — Streaming Speech-to-Text. Do not begin M8 as part of M7.

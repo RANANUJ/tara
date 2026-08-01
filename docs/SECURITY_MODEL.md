@@ -232,6 +232,8 @@ M6 implements only an authenticated JSON transport. `POST /api/v1/ws/tickets` re
 
 M6 logs connection lifecycle, safe event type, correlation ID, duration, and minimized owner/session references only. It never logs tickets, bearer values, cookies, or event payloads. Binary frames and every future audio/assistant/tool/confirmation event family are rejected or reserved until their authorized milestone.
 
+M7 permits microphone data only through a user-initiated foreground browser capture session bound to its authenticated WebSocket owner/session/connection. Canonical PCM frames are size-, UUID-, and sequence-validated before VAD; raw bytes are transient counters-only input and are never stored, logged, placed in errors, or written to SQLite. Background, locked-screen, wake-word, native, and automatic capture are not implemented or claimed.
+
 - Use `wss` outside loopback.
 - Accept a single-use, short-lived ticket; redact it from all logs.
 - Verify authenticated session, allowed origin, ticket binding, protocol version, and connection count.

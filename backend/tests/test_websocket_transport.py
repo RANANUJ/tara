@@ -3,13 +3,15 @@
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tara_api.domain.audio import AudioFrame
 from tara_api.domain.auth import AuthenticatedOwnerContext, Owner, OwnerSession
+from tara_api.transport.audio import CANONICAL_FORMAT, encode_frame
 from tara_api.transport.tickets import InMemoryConnectionTicketService
 
 
@@ -137,3 +139,17 @@ def test_invalid_ticket_and_connection_limit_are_rejected(client: TestClient) ->
             error = second.receive_json()
             assert error["type"] == "session.error"
             assert error["payload"]["code"] == "connection_limit_exceeded"
+
+
+def test_audio_requires_negotiation_then_emits_level_and_vad_events(client: TestClient) -> None:
+    headers, session_id = _bootstrap(client)
+    with client.websocket_connect(f"/api/v1/ws/session?ticket={_ticket(client, headers)}") as websocket:
+        websocket.send_json(_event(session_id, 0, "session.hello"))
+        websocket.receive_json()
+        audio_session_id = str(uuid4())
+        websocket.send_json(_event(session_id, 1, "audio.session.start", {"audio_session_id": audio_session_id}))
+        assert websocket.receive_json()["type"] == "audio.session.accepted"
+        websocket.send_json(_event(session_id, 2, "audio.format", {"sample_rate": 16000, "sample_width_bytes": 2, "channels": 1, "frame_ms": 20}))
+        payload = (10000).to_bytes(2, "little", signed=True) * (CANONICAL_FORMAT.frame_bytes // 2)
+        websocket.send_bytes(encode_frame(AudioFrame(UUID(audio_session_id), 0, payload)))
+        assert websocket.receive_json()["type"] == "audio.level"
