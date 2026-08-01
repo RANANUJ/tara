@@ -3,6 +3,8 @@
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from hashlib import sha256
+from uuid import UUID
 
 from tara_api.domain.auth import (
     AuthenticatedOwnerContext,
@@ -71,16 +73,20 @@ class AuthenticationService:
             normalized = self.normalize_email(email)
         except ValueError:
             normalized = "invalid@example.invalid"
-        if not self._limiter.allowed(normalized, now):
+        rate_limit_key = sha256(normalized.encode("utf-8")).hexdigest()
+        if not self._limiter.allowed(rate_limit_key, now):
+            await self._owners.record_login_audit("rate_limited", now)
             raise AuthenticationError
         credential = await self._owners.get_by_email(normalized)
         password_hash = credential.password_hash if credential else self._fake_hash
         if credential is None or not self._hasher.verify(password_hash, password):
-            self._limiter.record_failure(normalized, now)
+            self._limiter.record_failure(rate_limit_key, now)
+            await self._owners.record_login_audit("failed", now)
             raise AuthenticationError
         token = self._tokens.generate()
         session = await self._sessions.create(credential.owner.id, self._tokens.hash(token), now + self._session_ttl, client_label)
-        self._limiter.reset(normalized)
+        self._limiter.reset(rate_limit_key)
+        await self._owners.record_login_audit("succeeded", now)
         return credential.owner, session, token
 
     async def authenticate(self, token: str) -> AuthenticatedOwnerContext:
@@ -96,3 +102,9 @@ class AuthenticationService:
 
     async def logout_all(self, context: AuthenticatedOwnerContext) -> None:
         await self._sessions.revoke_all(context.owner.id, self._now())
+
+    async def list_sessions(self, context: AuthenticatedOwnerContext) -> list[OwnerSession]:
+        return await self._sessions.list_for_owner(context.owner.id)
+
+    async def revoke_session(self, context: AuthenticatedOwnerContext, session_id: UUID) -> bool:
+        return await self._sessions.revoke(context.owner.id, session_id, self._now())

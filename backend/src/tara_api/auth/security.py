@@ -4,12 +4,13 @@ import hashlib
 import secrets
 
 from argon2 import PasswordHasher as Argon2PasswordHasher
+from argon2 import Type
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 
 class Argon2idPasswordHasher:
     def __init__(self, time_cost: int = 3, memory_cost: int = 65536, parallelism: int = 2) -> None:
-        self._hasher = Argon2PasswordHasher(time_cost=time_cost, memory_cost=memory_cost, parallelism=parallelism)
+        self._hasher = Argon2PasswordHasher(type=Type.ID, time_cost=time_cost, memory_cost=memory_cost, parallelism=parallelism)
 
     def hash(self, password: str) -> str:
         return self._hasher.hash(password)

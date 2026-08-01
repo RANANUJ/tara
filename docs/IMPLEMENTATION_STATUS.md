@@ -101,26 +101,27 @@ When implementation is authorized:
 - Added single-owner bootstrap, normalized email/password validation, Argon2id password hashing, opaque bearer sessions, generic login failures, local rate-limiting seam, and authenticated session/logout/revocation routes.
 - Added M4 migration `20260801_0002_owner_authentication.py` with singleton owner constraint, password-hash-only storage, token-hash-only sessions, and lookup/expiry indexes.
 - Added framework-independent owner/session contracts, authentication service, and internal SQLAlchemy adapter. No AI, WebSocket, voice, frontend product UI, real tool, or device action was added.
+- M4 audit fixed nullable bearer-token serialization in session list responses, changed rate-limit keys to one-way email digests, made Argon2id explicit, added redacted login audit events, and routed session management through the authentication service.
 
 ### Files Changed
 
 - Authentication: `backend/src/tara_api/auth`, `backend/src/tara_api/domain/auth.py`, and `backend/src/tara_api/api/v1/auth.py`.
 - Persistence: `backend/src/tara_api/persistence/auth_store.py`, owner/session ORM models, and `backend/migrations/versions/20260801_0002_owner_authentication.py`.
-- Configuration/tests/docs: `backend/pyproject.toml`, `backend/src/tara_api/main.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/test_auth.py`, `docs/SECURITY_MODEL.md`, and `docs/API_CONTRACT.md`.
+- Configuration/tests/docs: `backend/pyproject.toml`, `backend/src/tara_api/main.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/auth`, `docs/SECURITY_MODEL.md`, and `docs/API_CONTRACT.md`.
 
 ### Commands Run and Results
 
 | Command | Result |
 |---|---|
-| `python -m pytest backend/tests/test_auth.py -q` | Passed: 1 focused auth lifecycle test |
+| `python -m pytest backend/tests/auth -q` | Passed: 9 focused auth tests; 1 expected session-binding limitation |
 | `python -m ruff check backend` | Passed |
 | `python -m mypy backend/src` | Passed: 39 source files |
-| `python -m pytest backend/tests -q` | Passed: 22 tests; one existing upstream warning |
+| `python -m pytest backend/tests -q` | Passed: 30 tests; 1 expected session-binding limitation and one existing upstream warning |
 | `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend validation |
 
 ### Unresolved Blockers
 
-None. Bearer tokens are API-first for M4; a later browser integration must prefer HttpOnly SameSite cookies or short-lived in-memory credentials.
+Confirmation-to-session binding is not implemented because M3 confirmation records have no owner/session columns; the focused test is explicitly expected to fail until a reviewed schema extension binds challenges to authenticated sessions. Bearer tokens remain API-first; browser integration must prefer HttpOnly SameSite cookies or short-lived in-memory credentials.
 
 ### Exact Recommended Next Milestone
 

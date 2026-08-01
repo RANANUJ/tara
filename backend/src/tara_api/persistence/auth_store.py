@@ -9,7 +9,7 @@ from sqlalchemy.engine import CursorResult
 
 from tara_api.domain.auth import AuthenticatedOwnerContext, Owner, OwnerCredential, OwnerSession
 from tara_api.persistence.database import Database
-from tara_api.persistence.models import OwnerModel, OwnerSessionModel
+from tara_api.persistence.models import AuditEventModel, OwnerModel, OwnerSessionModel
 
 
 class SqlAlchemyAuthenticationStore:
@@ -34,6 +34,10 @@ class SqlAlchemyAuthenticationStore:
         async with self._database.session() as session:
             model = await session.scalar(select(OwnerModel).where(OwnerModel.normalized_email == email))
         return OwnerCredential(self._owner(model), model.password_hash) if model else None
+
+    async def record_login_audit(self, outcome: str, occurred_at: datetime) -> None:
+        async with self._database.session() as session, session.begin():
+            session.add(AuditEventModel(event_type="authentication.login", outcome=outcome, occurred_at=occurred_at))
 
     async def create(self, owner_id: UUID, token_hash: str, expires_at: datetime, client_label: str | None) -> OwnerSession:
         async with self._database.session() as session, session.begin():

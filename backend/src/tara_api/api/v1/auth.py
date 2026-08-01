@@ -27,7 +27,10 @@ class SessionResponse(BaseModel):
     email: str
     session_id: str
     expires_at: str
-    token: str | None = None
+
+
+class LoginSessionResponse(SessionResponse):
+    token: str
 
 
 def _service(request: Request) -> AuthenticationService:
@@ -46,8 +49,12 @@ async def authenticated_context(request: Request, authorization: Annotated[str |
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required") from error
 
 
-def _response(context: AuthenticatedOwnerContext, token: str | None = None) -> SessionResponse:
-    return SessionResponse(owner_id=str(context.owner.id), email=context.owner.email, session_id=str(context.session.id), expires_at=context.session.expires_at.isoformat(), token=token)
+def _response(context: AuthenticatedOwnerContext) -> SessionResponse:
+    return SessionResponse(owner_id=str(context.owner.id), email=context.owner.email, session_id=str(context.session.id), expires_at=context.session.expires_at.isoformat())
+
+
+def _login_response(context: AuthenticatedOwnerContext, token: str) -> LoginSessionResponse:
+    return LoginSessionResponse(owner_id=str(context.owner.id), email=context.owner.email, session_id=str(context.session.id), expires_at=context.session.expires_at.isoformat(), token=token)
 
 
 @router.get("/bootstrap/status", response_model=BootstrapStatusResponse)
@@ -55,23 +62,23 @@ async def bootstrap_status(request: Request) -> BootstrapStatusResponse:
     return BootstrapStatusResponse(bootstrap_required=await _service(request).bootstrap_required())
 
 
-@router.post("/bootstrap", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def bootstrap(payload: CredentialsRequest, request: Request) -> SessionResponse:
+@router.post("/bootstrap", response_model=LoginSessionResponse, status_code=status.HTTP_201_CREATED)
+async def bootstrap(payload: CredentialsRequest, request: Request) -> LoginSessionResponse:
     try:
         await _service(request).bootstrap(payload.email, payload.password)
         owner, session, token = await _service(request).login(payload.email, payload.password, payload.client_label)
     except (BootstrapClosedError, ValueError):
         raise HTTPException(status.HTTP_409_CONFLICT, "bootstrap is unavailable") from None
-    return _response(AuthenticatedOwnerContext(owner, session), token)
+    return _login_response(AuthenticatedOwnerContext(owner, session), token)
 
 
-@router.post("/login", response_model=SessionResponse)
-async def login(payload: CredentialsRequest, request: Request) -> SessionResponse:
+@router.post("/login", response_model=LoginSessionResponse)
+async def login(payload: CredentialsRequest, request: Request) -> LoginSessionResponse:
     try:
         owner, session, token = await _service(request).login(payload.email, payload.password, payload.client_label)
     except AuthenticationError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication failed") from None
-    return _response(AuthenticatedOwnerContext(owner, session), token)
+    return _login_response(AuthenticatedOwnerContext(owner, session), token)
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -91,10 +98,10 @@ async def logout_all(request: Request, context: Annotated[AuthenticatedOwnerCont
 
 @router.get("/sessions", response_model=list[SessionResponse])
 async def sessions(request: Request, context: Annotated[AuthenticatedOwnerContext, Depends(authenticated_context)]) -> list[SessionResponse]:
-    records = await request.app.state.authentication_store.list_for_owner(context.owner.id)
+    records = await _service(request).list_sessions(context)
     return [SessionResponse(owner_id=str(context.owner.id), email=context.owner.email, session_id=str(record.id), expires_at=record.expires_at.isoformat()) for record in records]
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_session(session_id: UUID, request: Request, context: Annotated[AuthenticatedOwnerContext, Depends(authenticated_context)]) -> None:
-    await request.app.state.authentication_store.revoke(context.owner.id, session_id, request.app.state.authentication_service._now())
+    await _service(request).revoke_session(context, session_id)

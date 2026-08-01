@@ -74,7 +74,7 @@ The UI maps `transcribing` to the Guide Star's Listening or Thinking visual acco
 
 ## 4. Authentication API
 
-Implemented M4 endpoints are `GET /api/v1/auth/bootstrap/status`, `POST /api/v1/auth/bootstrap`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/logout-all`, `GET /api/v1/auth/session`, `GET /api/v1/auth/sessions`, and `DELETE /api/v1/auth/sessions/{session_id}`. Bootstrap status exposes only `bootstrap_required`; bootstrap closes permanently after the first owner. Login and protected calls use `Authorization: Bearer <opaque-session-token>`. Tokens are returned only on bootstrap/login, expire by absolute and idle limits, and are never persisted or returned in session-list responses. Login failures are generic and rate-limit responses never identify an account.
+Implemented M4 endpoints are `GET /api/v1/auth/bootstrap/status`, `POST /api/v1/auth/bootstrap`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/logout-all`, `GET /api/v1/auth/session`, `GET /api/v1/auth/sessions`, and `DELETE /api/v1/auth/sessions/{session_id}`. Bootstrap status exposes only `bootstrap_required`; bootstrap closes permanently after the first owner. Login and protected calls use `Authorization: Bearer <opaque-session-token>`. Tokens are returned only on bootstrap/login; `session` and `sessions` responses omit the token and token hash. Tokens expire by absolute and idle limits and are never persisted in raw form. Login failures are generic and rate-limit responses never identify an account.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
