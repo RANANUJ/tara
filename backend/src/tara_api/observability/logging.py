@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from tara_api.config.settings import Settings
 
 REDACTED = "[REDACTED]"
-SENSITIVE_KEY_PARTS = ("authorization", "cookie", "password", "secret", "token", "api_key")
+SENSITIVE_KEY_PARTS = ("authorization", "cookie", "password", "secret", "token", "api_key", "database_url")
 
 
 def _is_sensitive_key(key: object) -> bool:

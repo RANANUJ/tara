@@ -95,11 +95,11 @@ Bootstrap is disabled permanently after owner creation unless an offline adminis
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/api/v1/health/live` | No | Process liveness only; no dependency or version details |
-| `GET` | `/api/v1/health/ready` | Private network | Readiness for normal requests; minimal aggregate result |
-| `GET` | `/api/v1/status` | Yes | User-facing status of backend, models, speech, stores, scheduler, and last voice turn |
+| `GET` | `/api/v1/health/ready` | Private network | Required dependency readiness with safe state, timestamp, latency, and diagnostic summaries; returns `503` when not ready |
+| `GET` | `/api/v1/status` | Yes | Safe owner-only status for application metadata, uptime, database, authentication storage, schema checks, and implemented feature flags only |
 | `POST` | `/api/v1/diagnostics/exports` | Yes + CSRF | Creates a redacted diagnostics export after explicit confirmation |
 
-Authenticated status entries contain `component`, `state`, `last_success_at`, `latency_ms`, `error_code`, and a user-safe `message`. Secrets, host paths, model prompts, and transcript content are excluded.
+M5 uses one error envelope: `{"error":{"code":"stable_code","message":"safe message","correlation_id":"...","retryable":false}}`. Safe validation field details may be included. `X-Correlation-ID` accepts only bounded safe identifiers; invalid input is replaced with a generated identifier that is returned in every response and error envelope. Secrets, host paths, database URLs, bearer tokens, model prompts, transcript content, and exception text are excluded from status and error responses.
 
 The implemented bootstrap readiness endpoint reports `application` and `database` dependency entries. It returns `200` with `status: ready` only when the database connection succeeds; it returns `503` with `status: unavailable` and `database: unavailable` when the connection cannot be established. It never exposes a database URL, filesystem path, or driver error.
 

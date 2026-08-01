@@ -17,7 +17,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M2 — Backend Persistence Foundation | Complete | Async SQLAlchemy persistence, the reproducible initial Alembic migration, isolated SQLite tests, and database-aware readiness pass; see M2 evidence below |
 | M3 — Core Domain and Safety Foundation | Complete | Framework-independent domain contracts, default-deny permissions, deterministic confirmation, central tool gating, persistence adapter, and safety tests pass; see M3 evidence below |
 | M4 — Owner Bootstrap and Session Authentication | Complete | Single-owner authentication, revocable opaque sessions, and owner/session-bound one-time confirmations pass; see M4 evidence below |
-| M5 — Health, Status, and Error Framework | Not started | M1 has only liveness/readiness scaffolding; no dependency status framework or product error handling exists |
+| M5 — Health, Status, and Error Framework | Complete | Bounded dependency registry, authenticated safe status, standardized correlated errors, and structured request logging pass; see M5 evidence below |
 | M6 — Authenticated WebSocket Transport | Not started | No WebSocket exists |
 | M7 — Foreground Audio Capture and VAD | Not started | No audio pipeline exists |
 | M8 — Streaming Speech-to-Text | Not started | faster-whisper not integrated |
@@ -43,11 +43,11 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | Memory architecture | Defined | M3 structured-memory domain contract plus M2 durable records only; no ChromaDB, semantic retrieval, consolidation, or product API |
 | Authentication architecture | Defined | M4 single-owner bootstrap, opaque sessions, revocation, and session-bound internal confirmation contracts |
 | WebSocket architecture | Defined | Not started |
-| API strategy and contract | Defined | M2 keeps the two approved health endpoints and adds safe database dependency reporting to readiness only |
+| API strategy and contract | Defined | M5 provides liveness, bounded readiness, authenticated implemented-feature status, and one safe correlated error envelope |
 | Design system and component hierarchy | Defined | Not started |
 | State management | Defined | Not started |
-| Error handling | Defined | Not started beyond FastAPI defaults |
-| Logging and observability | Defined | M1 structured JSON logging and secret-redaction foundation only |
+| Error handling | Defined | M5 typed application errors, safe FastAPI/Pydantic mappings, and correlated response envelopes |
+| Logging and observability | Defined | M5 structured request completion logging, correlation IDs, health latency, and secret-redaction foundations |
 | Deployment and operations | Defined | Not started |
 | Coding/naming/folder standards | Defined | Not started |
 | Security model | Defined | M4 adds authenticated owner/session binding to deterministic one-time confirmation and redacted audit foundations |
@@ -128,6 +128,39 @@ None for M4. Bearer tokens remain API-first; a future browser integration must p
 ### Exact Recommended Next Milestone
 
 M5 — Health, Status, and Error Framework. Do not start WebSockets, AI, voice, tools, or frontend product work as part of M5.
+
+## 7. M5 Completion Evidence
+
+### Completed Scope
+
+- Added framework-independent health states, dependency results, readiness/status snapshots, and typed application errors.
+- Added bounded concurrent checks for only the implemented application, database, authentication persistence, and schema revision dependencies; failures and timeouts return safe typed results without exposing exception text.
+- Extended liveness/readiness and added authenticated `GET /api/v1/status` with safe version, environment, uptime, dependency, and implemented-feature data only.
+- Added strict `X-Correlation-ID` handling, structured request-completion logging, standardized API/Pydantic/not-found/authentication error envelopes, and generic production internal errors.
+- Added a reusable cancellation-safe timeout helper. No WebSocket, AI, voice, ChromaDB, product screen, real tool, scheduler, or device action was added.
+
+### Files Changed
+
+- Domain/observability/API: `backend/src/tara_api/domain/health.py`, `backend/src/tara_api/domain/errors.py`, `backend/src/tara_api/observability`, `backend/src/tara_api/api/errors.py`, `backend/src/tara_api/api/middleware.py`, `backend/src/tara_api/api/v1/health.py`, `backend/src/tara_api/api/v1/status.py`, and `backend/src/tara_api/main.py`.
+- Compatibility/tests/docs: `backend/src/tara_api/api/v1/auth.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/test_health.py`, `backend/tests/test_readiness.py`, `backend/tests/test_m5_framework.py`, `backend/tests/auth/test_login.py`, `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, and this status document.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_m5_framework.py backend/tests/test_health.py backend/tests/test_readiness.py backend/tests/auth backend/tests/test_safety.py backend/tests/test_migrations.py -q` | Passed: 30 tests |
+| `backend/.venv/Scripts/python.exe -m ruff check backend` | Passed |
+| `backend/.venv/Scripts/python.exe -m mypy backend/src` | Passed: 46 source files |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 38 tests; one existing upstream warning |
+| `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend Ruff/mypy/pytest validation |
+
+### Unresolved Blockers
+
+None. The existing FastAPI/Starlette deprecation warning remains non-blocking.
+
+### Exact Recommended Next Milestone
+
+M6 — Authenticated WebSocket Transport. Do not begin M6 as part of this milestone.
 
 ## 8. M3 Completion Evidence
 

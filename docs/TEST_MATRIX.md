@@ -110,6 +110,9 @@ No test may send a real message, place a call, delete owner data, or incur cloud
 | OBS-004 | Integration | Dependency status | Each dependency reports ready/degraded/unavailable accurately |
 | OBS-005 | Integration | Metrics timing | Required latency metrics are emitted once per completed turn |
 | OBS-006 | Integration | Audit separation | Security events are recorded without sensitive payload content |
+| OBS-007 | Integration | M5 readiness registry | Required failures return `503`; optional degradation remains ready with safe latency/diagnostic fields |
+| OBS-008 | Security | M5 error/correlation envelope | Validation, auth, and not-found failures use safe stable codes and bounded correlation IDs |
+| OBS-009 | Integration | M5 authenticated status | Owner status exposes only implemented features and no secret/deployment values |
 | WS-001 | Contract | Valid ticket handshake | `session.ready` follows authenticated one-time ticket use |
 | WS-002 | Security | Missing/expired ticket | Upgrade is rejected |
 | WS-003 | Security | Ticket replay | Second use is rejected |

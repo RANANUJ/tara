@@ -33,10 +33,7 @@ def test_readiness_reports_database_unavailable() -> None:
         response = client.get("/api/v1/health/ready")
 
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "unavailable",
-        "dependencies": [
-            {"name": "application", "status": "ready"},
-            {"name": "database", "status": "unavailable"},
-        ],
-    }
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["ready"] is False
+    assert next(item for item in body["dependencies"] if item["name"] == "database")["state"] == "unavailable"

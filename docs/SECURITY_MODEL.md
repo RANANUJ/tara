@@ -275,6 +275,8 @@ Unregistered tools cannot be invoked.
 
 Operational logs use an allowlist of safe fields. Audit records capture who, what capability, what safe target summary, decision, result, timestamp, and correlation IDs.
 
+M5 accepts a bounded, safe `X-Correlation-ID` or generates one. The identifier is not authentication data and is returned in response headers and safe error envelopes. Request logs include only correlation ID, method, normalized route, HTTP status, duration, and safe error/dependency codes. Authentication headers, cookies, credentials, token hashes, request/response bodies, database URLs, and raw exception text are excluded. Unexpected failures return a generic correlated internal-error envelope; stack traces remain server-log-only.
+
 Do not log by default:
 
 - cookies, tokens, keys, passphrases, or authorization headers;

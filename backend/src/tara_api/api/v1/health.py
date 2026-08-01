@@ -1,4 +1,4 @@
-"""Minimal health endpoints for the backend bootstrap."""
+"""Safe process liveness and dependency readiness endpoints."""
 
 from typing import Literal, cast
 
@@ -6,56 +6,56 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from tara_api.persistence.database import Database
+from tara_api.domain.health import HealthCheckResult, ServiceReadiness
+from tara_api.observability.health import HealthRegistry
 
 router = APIRouter(tags=["health"])
 
 
 class LivenessResponse(BaseModel):
-    """Response proving that the FastAPI process can serve requests."""
-
     status: Literal["ok"]
 
 
 class DependencyStatus(BaseModel):
-    """Typed readiness state for a bootstrap dependency."""
-
     name: str
-    status: Literal["ready", "unavailable"]
+    state: str
+    required: bool
+    checked_at: str
+    latency_ms: int
+    diagnostic: str | None = None
 
 
 class ReadinessResponse(BaseModel):
-    """Response proving that bootstrap dependencies are ready."""
-
-    status: Literal["ready", "unavailable"]
+    status: str
+    ready: bool
     dependencies: list[DependencyStatus]
+
+
+def _dependency(result: HealthCheckResult) -> DependencyStatus:
+    return DependencyStatus(
+        name=result.name.value,
+        state=result.state.value,
+        required=result.severity.value == "required",
+        checked_at=result.checked_at.isoformat(),
+        latency_ms=result.latency_ms,
+        diagnostic=result.diagnostic,
+    )
+
+
+def _response(result: ServiceReadiness) -> ReadinessResponse:
+    return ReadinessResponse(status=result.state.value, ready=result.ready, dependencies=[_dependency(item) for item in result.dependencies])
 
 
 @router.get("/health/live", response_model=LivenessResponse, status_code=status.HTTP_200_OK)
 async def live() -> LivenessResponse:
-    """Return process liveness without probing future product dependencies."""
     return LivenessResponse(status="ok")
 
 
-@router.get(
-    "/health/ready",
-    response_model=ReadinessResponse,
-    responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessResponse}},
-)
+@router.get("/health/ready", response_model=ReadinessResponse, responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessResponse}})
 async def ready(request: Request) -> ReadinessResponse | JSONResponse:
-    """Return readiness that reports the local persistence dependency honestly."""
-    database = cast(Database, request.app.state.database)
-    database_health = await database.check_connection()
-    dependency_status: Literal["ready", "unavailable"] = (
-        "ready" if database_health.available else "unavailable"
-    )
-    response = ReadinessResponse(
-        status="ready" if database_health.available else "unavailable",
-        dependencies=[
-            DependencyStatus(name="application", status="ready"),
-            DependencyStatus(name="database", status=dependency_status),
-        ],
-    )
-    if not database_health.available:
+    registry = cast(HealthRegistry, request.app.state.health_registry)
+    result = await registry.readiness()
+    response = _response(result)
+    if not result.ready:
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=response.model_dump())
     return response

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Tara API"
+    app_version: str = "0.1.0"
+    build_revision: str | None = None
     environment: Environment = "development"
     log_level: LogLevel = "INFO"
     host: str = "127.0.0.1"
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     service_secret: SecretStr = SecretStr("")
     session_absolute_minutes: int = Field(default=1440, ge=5, le=10080)
     session_idle_minutes: int = Field(default=60, ge=5, le=1440)
+    health_check_timeout_ms: int = Field(default=1000, ge=10, le=10000)
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""

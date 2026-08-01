@@ -3,11 +3,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field
 
 from tara_api.auth.service import AuthenticationError, AuthenticationService, BootstrapClosedError
 from tara_api.domain.auth import AuthenticatedOwnerContext
+from tara_api.domain.errors import AuthenticationFailedError, AuthenticationRequiredError, ConflictError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,14 +40,14 @@ def _service(request: Request) -> AuthenticationService:
 
 async def authenticated_context(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthenticatedOwnerContext:
     if authorization is None or not authorization.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+        raise AuthenticationRequiredError
     token = authorization.removeprefix("Bearer ").strip()
     if not token or " " in token:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+        raise AuthenticationRequiredError
     try:
         return await _service(request).authenticate(token)
     except AuthenticationError as error:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required") from error
+        raise AuthenticationRequiredError from error
 
 
 def _response(context: AuthenticatedOwnerContext) -> SessionResponse:
@@ -68,7 +69,7 @@ async def bootstrap(payload: CredentialsRequest, request: Request) -> LoginSessi
         await _service(request).bootstrap(payload.email, payload.password)
         owner, session, token = await _service(request).login(payload.email, payload.password, payload.client_label)
     except (BootstrapClosedError, ValueError):
-        raise HTTPException(status.HTTP_409_CONFLICT, "bootstrap is unavailable") from None
+        raise ConflictError("Bootstrap is unavailable.") from None
     return _login_response(AuthenticatedOwnerContext(owner, session), token)
 
 
@@ -77,7 +78,7 @@ async def login(payload: CredentialsRequest, request: Request) -> LoginSessionRe
     try:
         owner, session, token = await _service(request).login(payload.email, payload.password, payload.client_label)
     except AuthenticationError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication failed") from None
+        raise AuthenticationFailedError from None
     return _login_response(AuthenticatedOwnerContext(owner, session), token)
 
 

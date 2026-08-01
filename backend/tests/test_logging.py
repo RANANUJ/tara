@@ -3,7 +3,7 @@
 import logging
 
 from tara_api.config.settings import Settings
-from tara_api.observability.logging import REDACTED, JsonFormatter
+from tara_api.observability.logging import REDACTED, JsonFormatter, redact_log_value
 
 
 def test_sensitive_settings_are_redacted_from_structured_logs() -> None:
@@ -24,3 +24,9 @@ def test_sensitive_settings_are_redacted_from_structured_logs() -> None:
 
     assert secret not in rendered
     assert REDACTED in rendered
+
+
+def test_nested_database_urls_and_tokens_are_redacted() -> None:
+    rendered = redact_log_value({"database_url": "sqlite:///private.db", "nested": {"access_token": "opaque-token"}})
+
+    assert rendered == {"database_url": REDACTED, "nested": {"access_token": REDACTED}}
