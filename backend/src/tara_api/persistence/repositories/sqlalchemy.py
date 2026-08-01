@@ -423,10 +423,12 @@ class SqlAlchemyConfirmationRepository:
         action_hash: str,
         expires_at: datetime,
         *,
+        confirmation_id: UUID | None = None,
         conversation_id: UUID | None = None,
         permission_setting_id: UUID | None = None,
     ) -> PendingConfirmationRecord:
         model = PendingConfirmationModel(
+            id=confirmation_id,
             conversation_id=conversation_id,
             permission_setting_id=permission_setting_id,
             action_type=action_type,
@@ -497,6 +499,68 @@ class SqlAlchemyConfirmationRepository:
             consumed_at=consumed_at_utc,
             idempotency_key_hash=idempotency_key_hash,
             audit_summary=audit_summary,
+        )
+        self._session.add(consumption)
+        await self._session.flush()
+        return _consumption_record(consumption)
+
+    async def transition(
+        self,
+        confirmation_id: UUID,
+        status: ConfirmationStatus,
+        occurred_at: datetime,
+    ) -> PendingConfirmationRecord | None:
+        occurred_at_utc = ensure_utc(occurred_at)
+        expiry_condition = (
+            PendingConfirmationModel.expires_at <= occurred_at_utc
+            if status == ConfirmationStatus.EXPIRED
+            else PendingConfirmationModel.expires_at > occurred_at_utc
+        )
+        eligible_statuses = (
+            (ConfirmationStatus.AWAITING_CONFIRMATION, ConfirmationStatus.APPROVED)
+            if status in {ConfirmationStatus.EXPIRED, ConfirmationStatus.INVALIDATED}
+            else (ConfirmationStatus.AWAITING_CONFIRMATION,)
+        )
+        statement = (
+            update(PendingConfirmationModel)
+            .where(
+                PendingConfirmationModel.id == confirmation_id,
+                PendingConfirmationModel.status.in_(eligible_statuses),
+                PendingConfirmationModel.consumed_at.is_(None),
+                expiry_condition,
+            )
+            .values(status=status)
+            .returning(PendingConfirmationModel)
+        )
+        record = (await self._session.execute(statement)).scalar_one_or_none()
+        return _confirmation_record(record) if record else None
+
+    async def consume_approved(
+        self,
+        confirmation_id: UUID,
+        action_hash: str,
+        consumed_at: datetime,
+    ) -> ConfirmationConsumptionRecord | None:
+        consumed_at_utc = ensure_utc(consumed_at)
+        statement = (
+            update(PendingConfirmationModel)
+            .where(
+                PendingConfirmationModel.id == confirmation_id,
+                PendingConfirmationModel.action_hash == action_hash,
+                PendingConfirmationModel.status == ConfirmationStatus.APPROVED,
+                PendingConfirmationModel.consumed_at.is_(None),
+                PendingConfirmationModel.expires_at > consumed_at_utc,
+            )
+            .values(status=ConfirmationStatus.EXECUTING, consumed_at=consumed_at_utc)
+            .returning(PendingConfirmationModel.id)
+        )
+        consumed_confirmation_id = (await self._session.execute(statement)).scalar_one_or_none()
+        if consumed_confirmation_id is None:
+            return None
+        consumption = ConfirmationConsumptionModel(
+            confirmation_id=consumed_confirmation_id,
+            decision=ConfirmationDecision.APPROVED,
+            consumed_at=consumed_at_utc,
         )
         self._session.add(consumption)
         await self._session.flush()

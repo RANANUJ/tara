@@ -4,9 +4,9 @@
 
 Status date: 2026-08-01
 
-Current phase: M2 — Backend Persistence Foundation complete.
+Current phase: M3 — Core Domain and Safety Foundation complete.
 
-Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds only internal SQLite persistence infrastructure, repositories, and database-aware readiness. No authentication, semantic memory, AI, voice, WebSocket, product screen, or automation capability has been implemented.
+Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating only. No authentication, semantic retrieval, AI, voice, WebSocket, product screen, or real device action has been implemented.
 
 ## 2. Milestone Status
 
@@ -15,7 +15,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M0 — Engineering Documentation Baseline | Complete | Requested documents created; architecture and constraints recorded |
 | M1 — Repository and Toolchain Foundation | Complete | Monorepo, frontend/backend tooling, health scaffolding, CI, and bootstrap tests pass; see M1 evidence below |
 | M2 — Backend Persistence Foundation | Complete | Async SQLAlchemy persistence, the reproducible initial Alembic migration, isolated SQLite tests, and database-aware readiness pass; see M2 evidence below |
-| M3 — Shared Design Foundation and Responsive Shell | Not started | Static M1 shell exists; no responsive shell, product route, token, or Guide Star work exists |
+| M3 — Core Domain and Safety Foundation | Complete | Framework-independent domain contracts, default-deny permissions, deterministic confirmation, central tool gating, persistence adapter, and safety tests pass; see M3 evidence below |
 | M4 — Owner Bootstrap and Session Authentication | Not started | No authentication exists |
 | M5 — Health, Status, and Error Framework | Not started | M1 has only liveness/readiness scaffolding; no dependency status framework or product error handling exists |
 | M6 — Authenticated WebSocket Transport | Not started | No WebSocket exists |
@@ -38,9 +38,9 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 |---|---|---|
 | Complete target folder structure | Defined | M1 root, frontend, backend, contracts, scripts, and CI paths created; later domain paths deferred |
 | Frontend architecture | Defined | M1 static Next.js App Router shell only |
-| Backend architecture | Defined | M2 FastAPI database lifecycle, async SQLAlchemy unit of work, internal repositories, and database-aware health readiness |
+| Backend architecture | Defined | M3 framework-independent domain/safety services plus M2 persistence adapter; no product API or real tools |
 | AI and voice architecture | Defined | Not started |
-| Memory architecture | Defined | M2 durable structured-memory records only; no ChromaDB, semantic retrieval, consolidation, or product API |
+| Memory architecture | Defined | M3 structured-memory domain contract plus M2 durable records only; no ChromaDB, semantic retrieval, consolidation, or product API |
 | Authentication architecture | Defined | Not started |
 | WebSocket architecture | Defined | Not started |
 | API strategy and contract | Defined | M2 keeps the two approved health endpoints and adds safe database dependency reporting to readiness only |
@@ -50,7 +50,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | Logging and observability | Defined | M1 structured JSON logging and secret-redaction foundation only |
 | Deployment and operations | Defined | Not started |
 | Coding/naming/folder standards | Defined | Not started |
-| Security model | Defined | Not started |
+| Security model | Defined | M3 deterministic deny-by-default permission, action policy, one-time confirmation, tool-gating, and redacted audit foundations |
 | Testing strategy and matrices | Defined | M1 frontend render test and backend health/settings/logging tests created and run |
 
 ## 4. Product Requirement Disposition
@@ -94,7 +94,43 @@ When implementation is authorized:
 - Update requirement disposition when a capability becomes supported, remains unsupported, or is descoped through an accepted ADR.
 - Keep this document factual; planned work belongs in `IMPLEMENTATION_PLAN.md`.
 
-## 7. M2 Completion Evidence
+## 7. M3 Completion Evidence
+
+### Completed Scope
+
+- Added pure domain models and protocol ports for conversations, turns, assistant state, intents, tools, permissions, risks, confirmations, memories, retention, audits, latency, clocks, and execution.
+- Added deterministic default-deny permission checks and central action policy. Messages, calls, destructive actions, financial actions, and all outward-facing writes require explicit confirmation.
+- Added canonical request hashing, safe confirmation prompts, affirmative/negative/ambiguous response handling, expiry, argument invalidation, atomic one-time authorization consumption, and replay prevention without any LLM involvement.
+- Added central tool execution that rejects unknown tools and invalid arguments, checks permission before every call, requires authorization for consequential tools, and emits content-minimized audit events.
+- Added a SQLAlchemy safety-store adapter that persists confirmations, status transitions, one-time consumption, and redacted audit records without exposing ORM entities to the domain.
+- No provider, authentication, WebSocket, voice, ChromaDB, frontend product screen, or real side-effecting device action was added.
+
+### Files Changed
+
+- Domain and safety: `backend/src/tara_api/domain`, `backend/src/tara_api/safety`, and `backend/src/tara_api/persistence/safety_store.py`.
+- Persistence integration: `backend/src/tara_api/persistence/repositories/interfaces.py` and `backend/src/tara_api/persistence/repositories/sqlalchemy.py`.
+- Tests: `backend/tests/test_safety.py`.
+- Documentation: `docs/SECURITY_MODEL.md`, `docs/API_CONTRACT.md`, and `docs/IMPLEMENTATION_STATUS.md`.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `python -m pytest backend/tests/test_safety.py -q` | Passed: 10 M3 safety tests |
+| `python -m ruff check backend` | Passed |
+| `python -m mypy backend/src` | Passed: 32 source files, no issues |
+| `python -m pytest backend/tests -q` | Passed: 21 tests; one upstream FastAPI/Starlette deprecation warning only |
+| `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend Ruff/mypy/pytest all passed |
+
+### Unresolved Blockers
+
+None. The existing upstream `StarletteDeprecationWarning` from FastAPI's current `TestClient` remains non-blocking.
+
+### Exact Recommended Next Milestone
+
+M4 — Owner Bootstrap and Session Authentication. Implement authentication only after M3 acceptance, then bind future confirmation challenges to the authenticated owner session. Do not add real tools, AI, voice, WebSockets, or device actions as part of M4.
+
+## 8. M2 Completion Evidence
 
 ### Completed Scope
 
@@ -133,7 +169,7 @@ None. The upstream `StarletteDeprecationWarning` emitted by FastAPI's current `T
 
 M3 — Shared Design Foundation and Responsive Shell. Begin shared tokens, accessible responsive layout primitives, desktop/mobile navigation shells, and the Guide Star visual foundation only after accepting M2. Do not begin authentication, AI, voice, WebSocket, or product workflows as part of M3 bootstrap work.
 
-## 8. M1 Completion Evidence
+## 9. M1 Completion Evidence
 
 ### Completed Scope
 

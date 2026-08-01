@@ -10,6 +10,7 @@ from tara_api.persistence.types import (
     AuditEventRecord,
     ConfirmationConsumptionRecord,
     ConfirmationDecision,
+    ConfirmationStatus,
     ConversationRecord,
     ConversationTurnRecord,
     ConversationTurnRole,
@@ -138,6 +139,7 @@ class ConfirmationRepository(Protocol):
         action_hash: str,
         expires_at: datetime,
         *,
+        confirmation_id: UUID | None = None,
         conversation_id: UUID | None = None,
         permission_setting_id: UUID | None = None,
     ) -> PendingConfirmationRecord: ...
@@ -155,6 +157,20 @@ class ConfirmationRepository(Protocol):
         audit_summary: str | None = None,
         consumed_at: datetime | None = None,
     ) -> ConfirmationConsumptionRecord: ...
+
+    async def transition(
+        self,
+        confirmation_id: UUID,
+        status: ConfirmationStatus,
+        occurred_at: datetime,
+    ) -> PendingConfirmationRecord | None: ...
+
+    async def consume_approved(
+        self,
+        confirmation_id: UUID,
+        action_hash: str,
+        consumed_at: datetime,
+    ) -> ConfirmationConsumptionRecord | None: ...
 
     async def delete(self, confirmation_id: UUID) -> bool: ...
 

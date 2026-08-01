@@ -171,6 +171,8 @@ A confirmation challenge is cryptographically random and bound to:
 
 Approval executes exactly the bound action. Any argument or target change requires a new challenge.
 
+The implementation classifies and gates actions in server-owned code before tool dispatch; no model output can influence the decision. An approval yields a short-lived authorization bound to the canonical tool-request hash. The executor atomically consumes that authorization before invoking a tool, so it cannot be replayed, reused, or substituted for changed arguments. Only a recognized affirmative response within an active challenge can approve it; negative responses reject it and ambiguous responses remain unapproved.
+
 ### 8.4 Voice Confirmation
 
 Speech recognition may populate a proposed approve/reject response, but only an active, unexpired challenge is eligible. Generic “yes” outside that state has no authority. Disconnect, silence, wake detection, model inference, or proactive schedule execution never counts as confirmation.

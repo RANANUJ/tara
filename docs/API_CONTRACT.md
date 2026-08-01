@@ -193,6 +193,8 @@ Rules:
 5. A changed permission, session revocation, target version change, or policy change invalidates the challenge.
 6. The confirmation summary states actor, action, target, destination, material payload summary, and irreversible effect.
 
+The M3 backend safety contract is internal-only and exposes no new HTTP endpoint. It requires a reviewed tool definition, typed server-side argument validation, an enabled capability scope, centralized deterministic risk classification, and a matching one-time confirmation authorization before any consequential adapter is invoked.
+
 ## 10. Schedules and Proactive Behavior API
 
 | Method | Path | Purpose |
