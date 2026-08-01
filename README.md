@@ -1,6 +1,6 @@
 # Tara
 
-Tara is a local-first personal AI assistant. This repository currently contains only the M1 monorepo and development-tooling bootstrap: a static Next.js shell and a FastAPI health service. No authentication, AI, memory, voice, WebSocket, or product features are implemented yet.
+Tara is a local-first personal AI assistant. This repository contains the M1 monorepo/tooling bootstrap and the M2 backend persistence foundation: a static Next.js shell, a FastAPI health service, and internal SQLite persistence infrastructure. No authentication, AI, ChromaDB, voice, WebSocket, agent, or product features are implemented yet.
 
 ## Prerequisites
 
@@ -23,6 +23,27 @@ Copy-Item backend/.env.example backend/.env
 ```
 
 `backend/.env` is local-only. Replace placeholder values only when a later milestone requires them; never commit it.
+
+## Database Migrations
+
+Run migrations before starting the backend. Alembic uses a synchronous SQLite URL while the application uses SQLAlchemy's async `sqlite+aiosqlite` URL.
+
+```powershell
+.\backend\.venv\Scripts\Activate.ps1
+python -m alembic -c backend/alembic.ini upgrade head
+```
+
+Create a reviewed migration after changing only internal persistence models:
+
+```powershell
+python -m alembic -c backend/alembic.ini revision --autogenerate -m "describe_change"
+```
+
+For a non-default database, supply a SQLite URL explicitly:
+
+```powershell
+python -m alembic -c backend/alembic.ini -x database_url="sqlite:///./data/tara.db" upgrade head
+```
 
 ## Run
 
@@ -75,6 +96,6 @@ docs/                     Product and engineering source documentation
 ## Scope Guardrails
 
 - Tara is a responsive React + Next.js web application; Flutter is not used.
-- This bootstrap does not implement product routes, the Guide Star, AI providers, memory stores, authentication, WebSockets, audio, or automation tools.
+- M2 persists only internal foundational records through repositories and Alembic migrations. It exposes no new product API, authentication, AI, ChromaDB, WebSocket, voice, or scheduler behavior.
 - Do not commit `.env` files, secrets, recordings, models, local databases, logs, exports, virtual environments, or build output.
 - Read `AGENTS.md` and the architecture/security documents before extending the implementation.

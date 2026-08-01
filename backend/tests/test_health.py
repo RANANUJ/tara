@@ -16,5 +16,8 @@ def test_readiness_returns_typed_dependency_status(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
-        "dependencies": [{"name": "application", "status": "ready"}],
+        "dependencies": [
+            {"name": "application", "status": "ready"},
+            {"name": "database", "status": "ready"},
+        ],
     }

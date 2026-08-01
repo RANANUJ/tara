@@ -4,9 +4,9 @@
 
 Status date: 2026-08-01
 
-Current phase: M1 — Repository and Toolchain Foundation complete.
+Current phase: M2 — Backend Persistence Foundation complete.
 
-Product implementation has not started. M1 provides only the monorepo/tooling foundation, a static Next.js shell, a FastAPI application factory, and the two explicitly approved health endpoints. No authentication, memory, AI, voice, WebSocket, database schema, product screen, or automation capability has been implemented.
+Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds only internal SQLite persistence infrastructure, repositories, and database-aware readiness. No authentication, semantic memory, AI, voice, WebSocket, product screen, or automation capability has been implemented.
 
 ## 2. Milestone Status
 
@@ -14,7 +14,7 @@ Product implementation has not started. M1 provides only the monorepo/tooling fo
 |---|---|---|
 | M0 — Engineering Documentation Baseline | Complete | Requested documents created; architecture and constraints recorded |
 | M1 — Repository and Toolchain Foundation | Complete | Monorepo, frontend/backend tooling, health scaffolding, CI, and bootstrap tests pass; see M1 evidence below |
-| M2 — Backend Persistence Foundation | Not started | No schema or migration exists |
+| M2 — Backend Persistence Foundation | Complete | Async SQLAlchemy persistence, the reproducible initial Alembic migration, isolated SQLite tests, and database-aware readiness pass; see M2 evidence below |
 | M3 — Shared Design Foundation and Responsive Shell | Not started | Static M1 shell exists; no responsive shell, product route, token, or Guide Star work exists |
 | M4 — Owner Bootstrap and Session Authentication | Not started | No authentication exists |
 | M5 — Health, Status, and Error Framework | Not started | M1 has only liveness/readiness scaffolding; no dependency status framework or product error handling exists |
@@ -38,12 +38,12 @@ Product implementation has not started. M1 provides only the monorepo/tooling fo
 |---|---|---|
 | Complete target folder structure | Defined | M1 root, frontend, backend, contracts, scripts, and CI paths created; later domain paths deferred |
 | Frontend architecture | Defined | M1 static Next.js App Router shell only |
-| Backend architecture | Defined | M1 FastAPI factory and health router only |
+| Backend architecture | Defined | M2 FastAPI database lifecycle, async SQLAlchemy unit of work, internal repositories, and database-aware health readiness |
 | AI and voice architecture | Defined | Not started |
-| Memory architecture | Defined | Not started |
+| Memory architecture | Defined | M2 durable structured-memory records only; no ChromaDB, semantic retrieval, consolidation, or product API |
 | Authentication architecture | Defined | Not started |
 | WebSocket architecture | Defined | Not started |
-| API strategy and contract | Defined | M1 implements only approved `/api/v1/health/live` and `/api/v1/health/ready` scaffolding |
+| API strategy and contract | Defined | M2 keeps the two approved health endpoints and adds safe database dependency reporting to readiness only |
 | Design system and component hierarchy | Defined | Not started |
 | State management | Defined | Not started |
 | Error handling | Defined | Not started beyond FastAPI defaults |
@@ -94,7 +94,46 @@ When implementation is authorized:
 - Update requirement disposition when a capability becomes supported, remains unsupported, or is descoped through an accepted ADR.
 - Keep this document factual; planned work belongs in `IMPLEMENTATION_PLAN.md`.
 
-## 7. M1 Completion Evidence
+## 7. M2 Completion Evidence
+
+### Completed Scope
+
+- Added SQLAlchemy 2 async engine/session lifecycle, SQLite foreign-key enforcement, UTC timestamp normalization, and explicit unit-of-work commit/rollback boundaries.
+- Added internal ORM models and record-returning repository interfaces for conversations, turns, structured memories, permission settings, pending confirmations and consumption records, audit events, scheduler job metadata, and non-secret service configuration metadata.
+- Added `20260801_0001` as the reproducible initial Alembic migration. It upgrades empty SQLite databases only; the FastAPI application never creates schema automatically.
+- Extended readiness to report database availability safely and honestly. No product API, authentication, ChromaDB, AI, voice, WebSocket, raw audio, SQLCipher, or scheduler execution was added.
+- Added isolated temporary SQLite tests for migration, foreign keys, CRUD, rollback, one-time confirmation consumption, expiry, hard delete, retention/export records, and unavailable database readiness.
+
+### Files Changed
+
+- Backend dependencies/configuration: `backend/pyproject.toml`, `backend/.env.example`, `backend/alembic.ini`, and `backend/migrations`.
+- Persistence implementation: `backend/src/tara_api/persistence`, `backend/src/tara_api/main.py`, and `backend/src/tara_api/api/v1/health.py`.
+- Tests: `backend/tests/conftest.py`, `backend/tests/test_health.py`, `backend/tests/test_settings.py`, `backend/tests/test_migrations.py`, `backend/tests/test_persistence.py`, and `backend/tests/test_readiness.py`.
+- Documentation: `README.md`, `docs/API_CONTRACT.md`, and `docs/IMPLEMENTATION_STATUS.md`.
+
+### Migration Created
+
+- `backend/migrations/versions/20260801_0001_persistence_foundation.py` creates the M2 persistence foundation from an empty SQLite database.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `python -m pytest backend/tests/test_migrations.py backend/tests/test_persistence.py backend/tests/test_readiness.py -q` | Passed: 6 tests |
+| `python -m ruff check backend` | Passed |
+| `python -m mypy backend/src` | Passed: 19 source files, no issues |
+| `python -m pytest backend/tests -q` | Passed: 11 tests; one upstream FastAPI/Starlette deprecation warning only |
+| `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend Ruff/mypy/pytest all passed |
+
+### Unresolved Blockers
+
+None. The upstream `StarletteDeprecationWarning` emitted by FastAPI's current `TestClient` remains non-blocking and does not require an M2 code change.
+
+### Exact Recommended Next Milestone
+
+M3 — Shared Design Foundation and Responsive Shell. Begin shared tokens, accessible responsive layout primitives, desktop/mobile navigation shells, and the Guide Star visual foundation only after accepting M2. Do not begin authentication, AI, voice, WebSocket, or product workflows as part of M3 bootstrap work.
+
+## 8. M1 Completion Evidence
 
 ### Completed Scope
 

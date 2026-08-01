@@ -10,10 +10,12 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("TARA_LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("TARA_PORT", "8123")
     monkeypatch.setenv("TARA_SERVICE_SECRET", "configured-secret")
+    monkeypatch.setenv("TARA_DATABASE_URL", "sqlite+aiosqlite:///./data/configured.db")
 
     settings = Settings(_env_file=None)
 
     assert settings.environment == "test"
     assert settings.log_level == "DEBUG"
     assert settings.port == 8123
+    assert settings.database_url == "sqlite+aiosqlite:///./data/configured.db"
     assert settings.service_secret.get_secret_value() == "configured-secret"

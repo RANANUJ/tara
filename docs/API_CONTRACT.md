@@ -99,6 +99,8 @@ Bootstrap is disabled permanently after owner creation unless an offline adminis
 
 Authenticated status entries contain `component`, `state`, `last_success_at`, `latency_ms`, `error_code`, and a user-safe `message`. Secrets, host paths, model prompts, and transcript content are excluded.
 
+The implemented bootstrap readiness endpoint reports `application` and `database` dependency entries. It returns `200` with `status: ready` only when the database connection succeeds; it returns `503` with `status: unavailable` and `database: unavailable` when the connection cannot be established. It never exposes a database URL, filesystem path, or driver error.
+
 ## 6. Conversations API
 
 | Method | Path | Purpose |

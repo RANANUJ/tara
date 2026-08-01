@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    database_url: str = "sqlite+aiosqlite:///./data/tara.db"
     service_secret: SecretStr = SecretStr("")
 
     def secret_values(self) -> tuple[str, ...]:
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
             "log_level": self.log_level,
             "host": self.host,
             "port": self.port,
+            "database_url": self.database_url,
             "service_secret": self.service_secret,
         }
 
