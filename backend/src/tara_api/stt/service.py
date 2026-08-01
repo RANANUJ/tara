@@ -20,11 +20,6 @@ class FakeSpeechToTextProvider:
     name="fake"
     async def readiness(self)->bool:return True
     async def start(self,_:TranscriptionRequest)->SpeechToTextSession:return FakeSession((FinalTranscript("test transcript",TranscriptLanguage("en")),))
-class FasterWhisperSpeechToTextProvider:
-    name="faster-whisper"
-    def __init__(self,model:str,device:str,compute_type:str)->None:self.model=model;self.device=device;self.compute_type=compute_type
-    async def readiness(self)->bool:return False
-    async def start(self,_:TranscriptionRequest)->SpeechToTextSession:raise RuntimeError("model not loaded")
 Publisher=Callable[[TranscriptionJob,str,dict[str,object]],Awaitable[None]]
 class InMemoryTranscriptionJobs(TranscriptionJobRegistry):
     def __init__(self,provider:SpeechToTextProvider,publish:Publisher,maximum_queued:int=8,maximum_concurrent:int=1,timeout_seconds:float=30)->None:

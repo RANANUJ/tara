@@ -1,5 +1,12 @@
 # Tara Implementation Status
 
+## M8A Progress — Faster-Whisper Provider Adapter
+
+- Added optional lazy faster-whisper loading that requires an explicitly provisioned local directory; automatic download is rejected and imports remain absent from normal startup.
+- Model load and final-turn inference use `asyncio.to_thread`; mocked tests cover missing dependency, concurrent single-load behavior, local configuration, result mapping, and safe failures.
+- Validation: 5 adapter tests passed, 11 STT tests passed, Ruff and mypy passed, and the full backend suite passed with 85 tests.
+- M8 remains in progress. Queue lifecycle, WebSocket transcript coverage, health/status, and M8 documentation completion are deferred. Do not begin M8B or M9.
+
 ## 1. Status Summary
 
 Status date: 2026-08-01

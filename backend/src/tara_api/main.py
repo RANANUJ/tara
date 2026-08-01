@@ -25,7 +25,8 @@ from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
 from tara_api.transport.registry import InMemoryConnectionRegistry, RegistryEventPublisher
 from tara_api.transport.tickets import InMemoryConnectionTicketService
-from tara_api.stt.service import FakeSpeechToTextProvider, FasterWhisperSpeechToTextProvider
+from tara_api.stt.faster_whisper import FasterWhisperSpeechToTextProvider
+from tara_api.stt.service import FakeSpeechToTextProvider
 
 
 @asynccontextmanager
