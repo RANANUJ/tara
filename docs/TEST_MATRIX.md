@@ -113,6 +113,10 @@ No test may send a real message, place a call, delete owner data, or incur cloud
 | OBS-007 | Integration | M5 readiness registry | Required failures return `503`; optional degradation remains ready with safe latency/diagnostic fields |
 | OBS-008 | Security | M5 error/correlation envelope | Validation, auth, and not-found failures use safe stable codes and bounded correlation IDs |
 | OBS-009 | Integration | M5 authenticated status | Owner status exposes only implemented features and no secret/deployment values |
+| WS-M6-001 | Integration | Single-use ticket handshake | Authenticated ticket reaches `session.accepted` exactly once without bearer URL credentials |
+| WS-M6-002 | Security | Ticket/session invalidation | Expired, revoked, malformed, reused, or cross-session ticket exchange is rejected safely |
+| WS-M6-003 | Contract | JSON transport envelope | Strict v1 hello/ping/close/ack schemas enforce UUID, UTC, size, and sequence rules |
+| WS-M6-004 | Security | Transport limits and logging | Connection limits, idle/hello timeout, payload limits, and redacted lifecycle logs remain bounded |
 | WS-001 | Contract | Valid ticket handshake | `session.ready` follows authenticated one-time ticket use |
 | WS-002 | Security | Missing/expired ticket | Upgrade is rejected |
 | WS-003 | Security | Ticket replay | Second use is rejected |

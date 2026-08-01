@@ -4,9 +4,9 @@
 
 Status date: 2026-08-01
 
-Current phase: M4 — Owner Bootstrap and Session Authentication complete.
+Current phase: M6 — Authenticated WebSocket Transport complete.
 
-Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating. M4 adds single-owner authentication and session-bound internal confirmations. No semantic retrieval, AI, voice, WebSocket, product screen, or real device action has been implemented.
+Product implementation has not started. M1 provides the monorepo/tooling foundation and static shell. M2 adds internal SQLite persistence. M3 adds framework-independent domain contracts and deterministic safety gating. M4 adds single-owner authentication and session-bound internal confirmations. M5 adds safe health/error observability. M6 adds authenticated JSON-only WebSocket transport. No semantic retrieval, AI, voice, product screen, real tool, reminder, or device action has been implemented.
 
 ## 2. Milestone Status
 
@@ -18,7 +18,7 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M3 — Core Domain and Safety Foundation | Complete | Framework-independent domain contracts, default-deny permissions, deterministic confirmation, central tool gating, persistence adapter, and safety tests pass; see M3 evidence below |
 | M4 — Owner Bootstrap and Session Authentication | Complete | Single-owner authentication, revocable opaque sessions, and owner/session-bound one-time confirmations pass; see M4 evidence below |
 | M5 — Health, Status, and Error Framework | Complete | Bounded dependency registry, authenticated safe status, standardized correlated errors, and structured request logging pass; see M5 evidence below |
-| M6 — Authenticated WebSocket Transport | Not started | No WebSocket exists |
+| M6 — Authenticated WebSocket Transport | Complete | Hash-only single-use tickets, strict v1 JSON session transport, bounded lifecycle, and regression tests pass; see M6 evidence below |
 | M7 — Foreground Audio Capture and VAD | Not started | No audio pipeline exists |
 | M8 — Streaming Speech-to-Text | Not started | faster-whisper not integrated |
 | M9 — Local Text Agent Loop | Not started | Ollama not integrated |
@@ -42,15 +42,15 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | AI and voice architecture | Defined | Not started |
 | Memory architecture | Defined | M3 structured-memory domain contract plus M2 durable records only; no ChromaDB, semantic retrieval, consolidation, or product API |
 | Authentication architecture | Defined | M4 single-owner bootstrap, opaque sessions, revocation, and session-bound internal confirmation contracts |
-| WebSocket architecture | Defined | Not started |
-| API strategy and contract | Defined | M5 provides liveness, bounded readiness, authenticated implemented-feature status, and one safe correlated error envelope |
+| WebSocket architecture | Defined | M6 authenticated ticket exchange, JSON-only v1 handshake/ping/close/ack, process-local connection registry, and bounded lifecycle |
+| API strategy and contract | Defined | M6 adds authenticated ticket creation and versioned JSON WebSocket transport alongside M5 HTTP health/status/error contracts |
 | Design system and component hierarchy | Defined | Not started |
 | State management | Defined | Not started |
 | Error handling | Defined | M5 typed application errors, safe FastAPI/Pydantic mappings, and correlated response envelopes |
 | Logging and observability | Defined | M5 structured request completion logging, correlation IDs, health latency, and secret-redaction foundations |
 | Deployment and operations | Defined | Not started |
 | Coding/naming/folder standards | Defined | Not started |
-| Security model | Defined | M4 adds authenticated owner/session binding to deterministic one-time confirmation and redacted audit foundations |
+| Security model | Defined | M6 adds single-use owner/session-bound WebSocket tickets, lifecycle limits, and redacted transport logging |
 | Testing strategy and matrices | Defined | M1 frontend render test and backend health/settings/logging tests created and run |
 
 ## 4. Product Requirement Disposition
@@ -162,7 +162,39 @@ None. The existing FastAPI/Starlette deprecation warning remains non-blocking.
 
 M6 — Authenticated WebSocket Transport. Do not begin M6 as part of this milestone.
 
-## 8. M3 Completion Evidence
+## 8. M6 Completion Evidence
+
+### Completed Scope
+
+- Added `POST /api/v1/ws/tickets`, authenticated with the existing opaque owner session, and `WS /api/v1/ws/session?ticket=...`. Tickets are cryptographically random, short-lived, single-use, SHA-256-hashed, and owner/session-bound in bounded in-memory state; bearer tokens are never accepted in a URL or logged.
+- Added framework-independent ticket/connection contracts, concurrency-safe process-local connection registry, strict Pydantic protocol-v1 envelopes, `session.hello`, `session.ping`, `session.close`, `client.ack`, and matching transport-only server events.
+- Added bounded hello, idle, session-validity, JSON-size, event-rate, and per-session connection-limit enforcement. Each received event rechecks owner-session validity; close/error reasons are safe and no future product event is emitted.
+- No audio, VAD, STT, Ollama, agent, TTS, memory retrieval, tools, reminders, frontend product screen, or device action was added.
+
+### Files Changed
+
+- Transport/API: `backend/src/tara_api/domain/transport.py`, `backend/src/tara_api/transport`, `backend/src/tara_api/api/v1/websocket.py`, `backend/src/tara_api/main.py`, and `backend/src/tara_api/config/settings.py`.
+- Authentication/status/tests/docs: `backend/src/tara_api/auth/service.py`, `backend/src/tara_api/api/middleware.py`, `backend/src/tara_api/observability/application.py`, `backend/tests/test_websocket_transport.py`, `backend/tests/test_m5_framework.py`, `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, and this status document.
+
+### Commands Run and Results
+
+| Command | Result |
+|---|---|
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_websocket_transport.py backend/tests/test_m5_framework.py backend/tests/auth backend/tests/test_safety.py backend/tests/test_migrations.py -q` | Passed: 33 tests |
+| `backend/.venv/Scripts/python.exe -m ruff check backend` | Passed |
+| `backend/.venv/Scripts/python.exe -m mypy backend/src` | Passed: 52 source files |
+| `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` | Passed: 44 tests; one existing upstream warning |
+| `pnpm validate` | Passed: frontend lint/typecheck/test/build and backend Ruff/mypy/pytest validation |
+
+### Unresolved Blockers
+
+The M6 registry and ticket store are intentionally process-local. Multi-process deployment requires a reviewed shared transport backend in a later deployment-hardening milestone; this does not block the single-process M6 scope.
+
+### Exact Recommended Next Milestone
+
+M7 — Foreground Audio Capture and VAD. Do not begin M7 as part of M6.
+
+## 9. M3 Completion Evidence
 
 ### Completed Scope
 

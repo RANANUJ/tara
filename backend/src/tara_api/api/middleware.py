@@ -12,14 +12,14 @@ _VALID_CORRELATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 logger = logging.getLogger("tara_api")
 
 
-def _correlation_id(value: str | None) -> str:
+def select_correlation_id(value: str | None) -> str:
     return value if value and _VALID_CORRELATION_ID.fullmatch(value) else secrets.token_urlsafe(18)
 
 
 def install_request_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def correlate_and_log(request: Request, call_next) -> Response:
-        request.state.correlation_id = _correlation_id(request.headers.get(CORRELATION_HEADER))
+        request.state.correlation_id = select_correlation_id(request.headers.get(CORRELATION_HEADER))
         started = time.monotonic()
         response = await call_next(request)
         response.headers[CORRELATION_HEADER] = request.state.correlation_id

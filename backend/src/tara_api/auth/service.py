@@ -98,7 +98,10 @@ class AuthenticationService:
         return context
 
     async def is_context_active(self, context: AuthenticatedOwnerContext) -> bool:
-        session = await self._sessions.is_active(context.owner.id, context.session.id, self._now())
+        return await self.is_owner_session_active(context.owner.id, context.session.id)
+
+    async def is_owner_session_active(self, owner_id: UUID, session_id: UUID) -> bool:
+        session = await self._sessions.is_active(owner_id, session_id, self._now())
         return session is not None and session.last_used_at + self._idle_ttl > self._now()
 
     async def logout(self, context: AuthenticatedOwnerContext) -> None:

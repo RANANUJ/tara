@@ -223,11 +223,11 @@ Secrets such as ElevenLabs API keys use a dedicated write-only secret endpoint a
 
 ## 12. WebSocket Handshake
 
-1. The authenticated client requests a single-use ticket from `/api/v1/auth/websocket-ticket`.
-2. The client opens `/ws/v1/assistant?ticket=<opaque-ticket>` over `wss`.
-3. The server verifies origin, ticket expiry, single-use state, session validity, and connection limits.
-4. The server sends `session.ready` containing protocol version, heartbeat interval, maximum frame size, input/output audio options, and a new voice-session ID.
-5. The client selects a supported audio format in `audio.configure` before sending binary frames.
+1. An authenticated client calls `POST /api/v1/ws/tickets` with its existing opaque bearer session in the HTTP authorization header.
+2. The endpoint returns a cryptographically random, single-use connection ticket and short expiry. Only its SHA-256 hash plus owner/session binding are retained in bounded in-memory process state.
+3. The client opens `/api/v1/ws/session?ticket=<single-use-ticket>` over `wss` outside loopback. The long-lived bearer token is never placed in a URL.
+4. The server atomically consumes the ticket, rechecks the originating owner session, enforces the per-session connection limit, and requires `session.hello` before activating the connection.
+5. After a valid hello, the server emits `session.accepted`. M6 supports JSON text transport only; audio negotiation and binary frames are deferred.
 
 Tickets expire within a short window, are invalid after first use, and are redacted from access logs.
 
@@ -237,31 +237,24 @@ Every text event contains:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `protocol_version` | string | `1.0` for this contract |
+| `protocol_version` | integer | `1` for this contract |
 | `event_id` | UUID | Unique event identifier |
-| `session_id` | UUID | Current voice-session identifier |
+| `session_id` | UUID | Bound authenticated owner-session identifier |
 | `sequence` | integer | Monotonic sender-local sequence |
 | `type` | string | Dotted event name |
 | `timestamp` | timestamp | Sender time in UTC |
 | `payload` | object | Event-specific fields |
 
-The receiver ignores additive payload fields it does not understand but rejects an unsupported major protocol version.
+M6 Pydantic schemas reject unknown envelope fields and unsupported protocol versions. Event IDs must be UUIDs, timestamps must include an offset and are normalized to UTC, messages are capped at 16 KiB by default, and sender sequence numbers are non-negative and strictly increasing.
 
 ## 14. Client-to-Server Events
 
 | Event | Required payload | Behavior |
 |---|---|---|
-| `audio.configure` | input/output codec, sample rate, channel count | Negotiates audio before streaming |
-| `conversation.attach` | conversation ID or `new` | Binds the live session to durable history |
-| `listening.start` | device ID, locale | Begins an explicit foreground listening session |
-| `audio.input.start` | stream ID | Opens the sole active input stream |
-| Binary frame | negotiated audio bytes | Belongs to the active input stream |
-| `audio.input.end` | stream ID, reason | Closes input and requests final transcription |
-| `assistant.interrupt` | active turn ID | Cancels generation and output for barge-in |
-| `confirmation.respond` | confirmation ID, `approve` or `reject` | Resolves a live challenge through the same policy service as REST |
-| `turn.text` | text, locale | Starts a non-audio turn on the live session |
-| `client.visibility` | `visible` or `hidden` | Allows honest handling of browser suspension risk |
-| `ping` | nonce | Application heartbeat |
+| `session.hello` | empty object | Required first event; activates the authenticated transport |
+| `session.ping` | empty object | Application-level transport heartbeat |
+| `session.close` | empty object | Requests graceful close |
+| `client.ack` | `event_id` UUID | Acknowledges a server transport event |
 
 The server must not treat silence, disconnect, repeated wake phrases, or arbitrary transcript text as implicit confirmation. Only `confirmation.respond` or the REST approval endpoint resolves a challenge.
 
@@ -269,43 +262,23 @@ The server must not treat silence, disconnect, repeated wake phrases, or arbitra
 
 | Event | Key payload | Purpose |
 |---|---|---|
-| `session.ready` | protocol and audio limits | Confirms connection readiness |
-| `assistant.state` | state, reason, turn ID | Authoritative Guide Star state |
-| `transcript.partial` | turn ID, text, stability | Replaceable live user transcript |
-| `transcript.final` | turn ID, text | Durable user transcript candidate |
-| `response.text.delta` | turn ID, delta | Incremental assistant text |
-| `response.text.final` | turn ID, text | Final assistant text |
-| `audio.output.start` | stream ID, codec | Announces following binary TTS frames |
-| Binary frame | negotiated audio bytes | Belongs to active output stream |
-| `audio.output.end` | stream ID, reason | Ends output cleanly |
-| `tool.proposed` | action ID, tool, safe summary | Shows planned tool work |
-| `tool.started` | action ID | Reports execution start |
-| `tool.completed` | action ID, safe result summary | Reports successful completion |
-| `tool.failed` | action ID, error code, retryable | Reports safe failure |
-| `confirmation.required` | confirmation ID, summary, expiry | Requests explicit user decision |
-| `memory.changed` | memory ID, change type | Invalidates/updates client query state |
-| `service.degraded` | component, code, fallback | Announces a non-fatal dependency issue |
-| `error` | stable code, message, recoverable | Reports protocol or turn error |
-| `pong` | nonce | Heartbeat response |
+| `session.accepted` | connection ID, protocol version | Confirms active authenticated transport |
+| `session.pong` | referenced client event ID | Responds to `session.ping` |
+| `session.error` | stable code, safe message | Reports protocol/transport failure without internals |
+| `session.closing` | safe reason | Announces graceful close |
+| `server.ack` | referenced client event ID | Confirms `client.ack` |
 
 ## 16. WebSocket Ordering and Recovery
 
-- Sequence numbers detect missing or duplicated control events.
-- One input and one output audio stream may exist at a time per socket.
-- A new `audio.input.start` while Tara is speaking implies barge-in only if it follows an explicit interrupt or negotiated automatic-barge-in setting.
-- The client applies `transcript.partial` by replacement, not concatenation; `response.text.delta` is append-only for the matching turn.
-- Terminal turn states are `completed`, `cancelled`, and `failed`.
-- On reconnect, the client refetches durable conversation and status through REST. It does not replay binary audio or approval events.
-- The server may resume text display for a durable completed turn but starts live state at `idle`.
+- The lifecycle is `connecting → authenticating → active → closing → closed`, with `failed` for an isolated transport error.
+- `session.hello` is required within 10 seconds by default; events before hello, malformed events, unsupported types, invalid sequence, oversized JSON, and rate-limit violations receive a safe `session.error` then close.
+- Every received event rechecks session validity; idle checks run at a bounded interval and close revoked/expired sessions. Idle connections close after 120 seconds by default.
+- Tickets are one use even when a failed handshake follows exchange. The in-memory ticket and connection registries are process-local; a future multi-process deployment requires a shared reviewed backend.
+- Future `audio.*`, `transcript.*`, `assistant.*`, `confirmation.*`, `tool.*`, and `response.*` families are reserved only. They are not implemented or emitted in M6.
 
 ## 17. Audio Contract
 
-- The browser offers supported capture formats; the server selects one in `session.ready`/`audio.configure`.
-- The preferred low-latency input is mono PCM at the pipeline's configured rate; compressed Opus is permitted when bandwidth requires it and server decoding is available.
-- Frame duration, maximum buffered duration, and maximum utterance length are advertised by the server.
-- Client timestamps are hints only; server receive order and sequence are authoritative.
-- Raw audio is transient by default and is not stored. An explicit diagnostics mode must be time-limited, visibly enabled, and separately consented.
-- Output audio includes stream IDs and is cancelled on barge-in. Stale frames for cancelled streams are discarded.
+M6 rejects binary frames and implements no audio, speech, transcript, agent, tool, confirmation, or TTS payload. Audio contracts begin no earlier than M7.
 
 ## 18. Rate, Size, and Timeout Policy
 
@@ -313,16 +286,14 @@ Limits are configuration values published where the client needs them. The contr
 
 - login attempts and session creation;
 - active WebSockets per owner session;
-- JSON and binary frame size;
-- queued audio duration;
-- utterance duration;
-- transcript and text-message length;
+- JSON message size (16 KiB default) and event rate (30 events/second default);
+- synchronous transport delivery only: M6 creates no unbounded outgoing or audio queue;
 - memory content and page size;
 - export frequency and artifact lifetime;
 - model/tool iteration count;
 - provider and tool timeouts.
 
-Limit failures use `429` or a WebSocket `error` event with `retry_after_ms` where retry is safe.
+Ticket endpoint failures use the standard HTTP error envelope. WebSocket failures use `session.error` and safe close codes: `4401` authentication/session invalidation, `1002` protocol error, `1008` policy/hello/rate violation, `1009` message too large, `1013` connection limit, and `1011` unexpected transport failure.
 
 ## 19. Compatibility and Contract Governance
 

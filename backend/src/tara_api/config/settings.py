@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     session_absolute_minutes: int = Field(default=1440, ge=5, le=10080)
     session_idle_minutes: int = Field(default=60, ge=5, le=1440)
     health_check_timeout_ms: int = Field(default=1000, ge=10, le=10000)
+    websocket_ticket_seconds: int = Field(default=60, ge=10, le=300)
+    websocket_hello_seconds: int = Field(default=10, ge=1, le=60)
+    websocket_idle_seconds: int = Field(default=120, ge=10, le=3600)
+    websocket_session_check_seconds: int = Field(default=15, ge=1, le=300)
+    websocket_max_message_bytes: int = Field(default=16384, ge=512, le=1048576)
+    websocket_max_connections_per_session: int = Field(default=3, ge=1, le=20)
+    websocket_max_events_per_second: int = Field(default=30, ge=1, le=300)
+    websocket_max_outgoing_queue: int = Field(default=32, ge=1, le=256)
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""

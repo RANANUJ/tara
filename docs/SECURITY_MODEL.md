@@ -228,6 +228,10 @@ Unregistered tools cannot be invoked.
 
 ## 11. WebSocket Security
 
+M6 implements only an authenticated JSON transport. `POST /api/v1/ws/tickets` requires the M4 owner session and creates a short-lived, single-use, SHA-256-hashed in-memory ticket bound to that owner/session. The only URL credential is this short-lived ticket; long-lived bearer tokens are never accepted in WebSocket URLs. Ticket exchange and every bounded session-validation interval recheck revocation, absolute expiry, and idle expiry. Connections carry safe owner/session/connection references, enforce a per-session limit, and are removed atomically on close. The in-memory ticket/connection registry is intentionally single-process; a later multi-process deployment must use a reviewed shared backend.
+
+M6 logs connection lifecycle, safe event type, correlation ID, duration, and minimized owner/session references only. It never logs tickets, bearer values, cookies, or event payloads. Binary frames and every future audio/assistant/tool/confirmation event family are rejected or reserved until their authorized milestone.
+
 - Use `wss` outside loopback.
 - Accept a single-use, short-lived ticket; redact it from all logs.
 - Verify authenticated session, allowed origin, ticket binding, protocol version, and connection count.
