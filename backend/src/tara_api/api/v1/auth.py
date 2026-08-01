@@ -1,6 +1,6 @@
 """Typed M4 owner bootstrap and bearer-session routes."""
 
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, status
@@ -35,7 +35,7 @@ class LoginSessionResponse(SessionResponse):
 
 
 def _service(request: Request) -> AuthenticationService:
-    return request.app.state.authentication_service
+    return cast(AuthenticationService, request.app.state.authentication_service)
 
 
 async def authenticated_context(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthenticatedOwnerContext:

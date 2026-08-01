@@ -1,5 +1,40 @@
 # Tara Implementation Status
 
+## M8 Final Acceptance - Complete
+
+M8 is complete. No M9 work was added.
+
+### Blocker Resolution
+
+- Reproduced the three original mypy errors: an untyped FastAPI request continuation, `Any` propagated as a response, and an untyped application-state access. `backend/src/tara_api/api/middleware.py` now uses `RequestResponseEndpoint`; `backend/src/tara_api/api/v1/auth.py` casts the state value at its typed boundary. Runtime behavior is unchanged.
+- Bare `pnpm` is absent from this Windows shell, while `corepack pnpm --version` resolves the repository pin as `11.9.0`. `corepack enable` cannot write to the protected Node installation. A temporary local `pnpm.cmd` shim delegating only to `corepack pnpm` enabled the exact root `pnpm validate` command without changing package metadata or lockfiles.
+- Exact successful Codex-shell invocation: `$env:PATH = 'C:\Users\anujr\.codex\visualizations\2026\08\01\019fbc6a-dc1c-7b72-819a-f6699384dfff\m8-pnpm-bin;D:\Tara\backend\.venv\Scripts;' + $env:PATH; pnpm validate`.
+- The prior hanging build is isolated to `npm.cmd run build`. Two clean direct `corepack pnpm --dir frontend build` runs exited with code 0 after 60.53 seconds and 58.45 seconds. No new persistent Node child process remained.
+
+### Final Evidence
+
+| Command | Result |
+|---|---|
+| `python -m ruff check backend` | Passed |
+| `python -m mypy backend/src` | Passed: 59 source files |
+| `python -m pytest backend/tests/stt -q` | Passed: 25 tests; 0 skipped, 0 xfailed, 0 failed |
+| `python -m pytest backend/tests/audio -q` | Passed: 29 tests; 0 skipped, 0 xfailed, 0 failed |
+| `python -m pytest backend/tests -q` | Passed: 99 tests; 0 skipped, 0 xfailed, 0 failed |
+| Frontend lint, typecheck, and tests | Passed; 8 frontend tests |
+| Clean direct frontend build | Passed twice; normal exit code 0 |
+| Root `pnpm validate` | Passed twice through the Corepack-delegating temporary shim; each run passed lint, typecheck, frontend tests/build, Ruff, mypy, and 99 backend tests |
+
+The only remaining warning is FastAPI's upstream `StarletteDeprecationWarning` for `TestClient`. Standard validation downloaded no model, used no internet access, required no GPU, and contains no required xfail.
+
+### Remaining Operational Notes
+
+- The manual local-model checks in `docs/MANUAL_TESTS.md` remain pending and are not represented as passed.
+- The STT registry remains intentionally process-local; multi-process deployment requires a reviewed shared queue.
+
+### Exact Recommended Next Milestone
+
+M9 - Local Text Agent Loop. Do not begin M9 as part of M8 acceptance.
+
 ## M8D2 Final-Acceptance Audit — Blocked on Pre-existing Validation Environment Issues
 
 ### Completed M8 Scope

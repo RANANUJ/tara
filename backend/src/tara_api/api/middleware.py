@@ -6,6 +6,7 @@ import secrets
 import time
 
 from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 CORRELATION_HEADER = "X-Correlation-ID"
 _VALID_CORRELATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -18,7 +19,7 @@ def select_correlation_id(value: str | None) -> str:
 
 def install_request_middleware(app: FastAPI) -> None:
     @app.middleware("http")
-    async def correlate_and_log(request: Request, call_next) -> Response:
+    async def correlate_and_log(request: Request, call_next: RequestResponseEndpoint) -> Response:
         request.state.correlation_id = select_correlation_id(request.headers.get(CORRELATION_HEADER))
         started = time.monotonic()
         response = await call_next(request)
