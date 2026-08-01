@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     stt_timeout_seconds: int = Field(default=30, ge=1, le=300)
     stt_max_queued_jobs: int = Field(default=8, ge=1, le=64)
     stt_max_concurrent_jobs: int = Field(default=1, ge=1, le=4)
+    stt_required: bool = False
+    stt_health_timeout_ms: int = Field(default=500, ge=10, le=10000)
+    stt_language_hint: Literal["en", "hi"] | None = None
+    stt_partial_mode: Literal["provider", "final_only"] = "provider"
+    stt_local_model_directory: str | None = None
+
+    @model_validator(mode="after")
+    def validate_stt(self) -> "Settings":
+        if self.environment == "production" and self.stt_provider == "fake":
+            raise ValueError("production cannot use the fake STT provider")
+        if self.stt_required and self.stt_provider == "disabled":
+            raise ValueError("required STT cannot be disabled")
+        return self
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""

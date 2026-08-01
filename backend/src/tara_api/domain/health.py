@@ -17,6 +17,7 @@ class DependencyName(StrEnum):
     DATABASE = "database"
     AUTHENTICATION = "authentication"
     SCHEMA = "schema"
+    STT = "stt"
 
 
 class HealthSeverity(StrEnum):
