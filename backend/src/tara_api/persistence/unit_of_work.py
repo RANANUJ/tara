@@ -5,6 +5,7 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from tara_api.persistence.repositories.agent import SqlAlchemyAgentRequestRepository
 from tara_api.persistence.repositories.sqlalchemy import (
     SqlAlchemyAuditEventRepository,
     SqlAlchemyConfirmationRepository,
@@ -48,6 +49,10 @@ class SqlAlchemyUnitOfWork:
     @property
     def conversations(self) -> SqlAlchemyConversationRepository:
         return SqlAlchemyConversationRepository(self._require_session())
+
+    @property
+    def agent_requests(self) -> SqlAlchemyAgentRequestRepository:
+        return SqlAlchemyAgentRequestRepository(self._require_session())
 
     @property
     def turns(self) -> SqlAlchemyConversationTurnRepository:

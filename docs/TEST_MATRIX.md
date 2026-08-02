@@ -366,3 +366,15 @@ M9A standard tests use deterministic fakes and `httpx.MockTransport` only. They 
 | Persistence context | Authenticated-owner-bound retrieval, pinned-first active memories, completed turns only, safe provenance metadata, expiry exclusion, deterministic character/token truncation, and no ORM exposure | `backend/tests/agent/test_context_provider.py` |
 
 M9B tests use only the isolated SQLite fixtures and deterministic code paths. They do not invoke an LLM, Ollama process, ChromaDB, network access, tool, WebSocket, or device capability.
+
+## 17. M9C Implemented Agent Service Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| Service lifecycle | Direct/final-transcript request handling, partial-transcript exclusion, input validation, deterministic no-model outcomes, provider failure mapping, and session rejection | `backend/tests/agent/test_agent_service.py` |
+| Queue and idempotency | FIFO bounded workers, global/concurrency/connection limits, accurate counters, concurrent duplicate suppression, and session-scoped idempotency | `backend/tests/agent/test_agent_queue.py`, `backend/tests/agent/test_agent_idempotency.py` |
+| Persistence | Owner-scoped conversation resolution, immutable request metadata, atomic successful turns, valid provider usage metadata, and prompt exclusion | `backend/tests/agent/test_agent_persistence.py`, `backend/tests/test_migrations.py` |
+| Cancellation and cleanup | Owner/session/connection-bound cancellation, idempotent repeated cancellation, terminal pruning, and explicit worker shutdown | `backend/tests/agent/test_agent_cancellation.py`, `backend/tests/agent/test_agent_cleanup.py` |
+| Security | Prompt/auth material exclusion from persisted metadata, no confirmation/tool path, and deterministic consequential-action refusal | `backend/tests/agent/test_agent_security.py` |
+
+M9C tests use deterministic fake providers, isolated SQLite databases, and process-local workers only. They require no Ollama process, model pull, internet, cloud service, tool, WebSocket agent event, or device capability.

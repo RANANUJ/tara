@@ -39,6 +39,8 @@ data/
 *.sqlite-shm
 recordings/
 models/
+!backend/src/tara_api/persistence/models/
+!backend/src/tara_api/persistence/models/*.py
 model-cache/
 .cache/huggingface/
 exports/

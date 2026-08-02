@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from tara_api.persistence.models import (
+    AgentRequestModel,
     AuditEventModel,
     ConfirmationConsumptionModel,
     ConversationModel,
@@ -23,6 +24,7 @@ from tara_api.persistence.models import (
     StructuredMemoryModel,
 )
 from tara_api.persistence.types import (
+    AgentRequestRecord,
     AuditEventRecord,
     ConfirmationAlreadyConsumedError,
     ConfirmationConsumptionRecord,
@@ -75,7 +77,7 @@ def _is_safe_configuration_key(config_key: str) -> bool:
 
 
 def _conversation_record(model: ConversationModel) -> ConversationRecord:
-    return ConversationRecord(model.id, model.label, model.created_at, model.updated_at)
+    return ConversationRecord(model.id, model.label, model.created_at, model.updated_at, model.owner_id)
 
 
 def _turn_record(model: ConversationTurnModel) -> ConversationTurnRecord:
@@ -88,6 +90,18 @@ def _turn_record(model: ConversationTurnModel) -> ConversationTurnRecord:
         model.content,
         model.created_at,
         model.updated_at,
+        model.agent_request_id,
+        dict(model.safe_metadata) if model.safe_metadata else None,
+    )
+
+
+def _agent_request_record(model: AgentRequestModel) -> AgentRequestRecord:
+    usage = dict(model.usage) if model.usage else None
+    return AgentRequestRecord(
+        model.id, model.owner_id, model.session_id, model.connection_id, model.conversation_id,
+        model.source, model.source_transcript_id, model.idempotency_key_hash, model.status,
+        model.route_category, model.failure_code, model.provider_name, model.model_identifier,
+        usage, model.duration_ms, model.created_at, model.updated_at,
     )
 
 
@@ -188,14 +202,22 @@ class SqlAlchemyConversationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, label: str | None = None) -> ConversationRecord:
-        model = ConversationModel(label=label)
+    async def create(self, label: str | None = None, *, owner_id: UUID | None = None) -> ConversationRecord:
+        model = ConversationModel(label=label, owner_id=owner_id)
         self._session.add(model)
         await self._session.flush()
         return _conversation_record(model)
 
     async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None:
         model = await self._session.get(ConversationModel, conversation_id)
+        return _conversation_record(model) if model else None
+
+    async def get_for_owner(self, conversation_id: UUID, owner_id: UUID) -> ConversationRecord | None:
+        statement = select(ConversationModel).where(
+            ConversationModel.id == conversation_id,
+            ConversationModel.owner_id == owner_id,
+        )
+        model = (await self._session.scalars(statement)).one_or_none()
         return _conversation_record(model) if model else None
 
     async def list(self, limit: int = 50, offset: int = 0) -> list[ConversationRecord]:
@@ -228,6 +250,9 @@ class SqlAlchemyConversationTurnRepository:
         role: ConversationTurnRole,
         status: ConversationTurnStatus,
         content: str,
+        *,
+        agent_request_id: UUID | None = None,
+        safe_metadata: dict[str, object] | None = None,
     ) -> ConversationTurnRecord:
         model = ConversationTurnModel(
             conversation_id=conversation_id,
@@ -235,6 +260,8 @@ class SqlAlchemyConversationTurnRepository:
             role=role,
             status=status,
             content=content,
+            agent_request_id=agent_request_id,
+            safe_metadata=safe_metadata,
         )
         self._session.add(model)
         await self._session.flush()

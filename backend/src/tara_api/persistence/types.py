@@ -107,6 +107,7 @@ class ConversationRecord:
     label: str | None
     created_at: datetime
     updated_at: datetime
+    owner_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +118,29 @@ class ConversationTurnRecord:
     role: ConversationTurnRole
     status: ConversationTurnStatus
     content: str
+    created_at: datetime
+    updated_at: datetime
+    agent_request_id: UUID | None = None
+    safe_metadata: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRequestRecord:
+    id: UUID
+    owner_id: UUID
+    session_id: UUID
+    connection_id: UUID | None
+    conversation_id: UUID
+    source: str
+    source_transcript_id: UUID | None
+    idempotency_key_hash: str
+    status: str
+    route_category: str | None
+    failure_code: str | None
+    provider_name: str | None
+    model_identifier: str | None
+    usage: dict[str, int] | None
+    duration_ms: int | None
     created_at: datetime
     updated_at: datetime
 

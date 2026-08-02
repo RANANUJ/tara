@@ -28,6 +28,19 @@ class AgentInputSource(StrEnum):
 
 
 class AgentError(StrEnum):
+    EMPTY_INPUT = "empty_input"
+    INPUT_TOO_LONG = "input_too_long"
+    INVALID_CONVERSATION = "invalid_conversation"
+    CONVERSATION_NOT_FOUND = "conversation_not_found"
+    DUPLICATE_REQUEST = "duplicate_request"
+    QUEUE_FULL = "queue_full"
+    CONNECTION_REQUEST_LIMIT = "connection_request_limit"
+    SESSION_REQUEST_LIMIT = "session_request_limit"
+    OWNER_REQUEST_LIMIT = "owner_request_limit"
+    INVALID_REQUEST_STATE = "invalid_request_state"
+    AMBIGUOUS_INTENT = "ambiguous_intent"
+    UNSUPPORTED_INTENT = "unsupported_intent"
+    CONSEQUENTIAL_ACTION_NOT_ENABLED = "consequential_action_not_enabled"
     PROVIDER_NOT_CONFIGURED = "provider_not_configured"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     PROVIDER_TIMEOUT = "provider_timeout"
@@ -38,6 +51,10 @@ class AgentError(StrEnum):
     REQUEST_CANCELED = "request_canceled"
     MODEL_NOT_AVAILABLE = "model_not_available"
     INTERNAL_MODEL_ERROR = "internal_model_error"
+    REQUEST_TIMED_OUT = "request_timed_out"
+    SESSION_INVALIDATED = "session_invalidated"
+    PERSISTENCE_FAILURE = "persistence_failure"
+    INTERNAL_AGENT_ERROR = "internal_agent_error"
 
 
 class IntentCategory(StrEnum):
@@ -315,6 +332,9 @@ class AgentRequest:
     source: AgentInputSource
     text: str
     created_at: datetime
+    conversation_id: UUID | None = None
+    source_transcript_id: UUID | None = None
+    idempotency_key_hash: str | None = None
 
     def __post_init__(self) -> None:
         if not self.text or len(self.text) > MAX_AGENT_INPUT_CHARS:
@@ -323,11 +343,44 @@ class AgentRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentSubmission:
+    """Untrusted content only; identity is supplied by the authenticated server context."""
+
+    text: str
+    source: AgentInputSource
+    idempotency_key: str | None = None
+    conversation_id: UUID | None = None
+    source_transcript_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("empty agent input")
+        if len(self.text) > MAX_AGENT_INPUT_CHARS:
+            raise ValueError("agent input is too long")
+        if self.source == AgentInputSource.DIRECT_TEXT and not self.idempotency_key:
+            raise ValueError("direct text requires an idempotency key")
+        if self.source == AgentInputSource.FINAL_TRANSCRIPT and self.source_transcript_id is None:
+            raise ValueError("final transcript requires a transcript identifier")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRequestSnapshot:
+    """Safe lifecycle state retained by the process-local request registry."""
+
+    request: AgentRequest
+    state: AgentState
+    route: IntentRoute | None = None
+    error: AgentError | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AgentResponse:
     request_id: UUID
     text: str
     state: AgentState
     created_at: datetime
+    error: AgentError | None = None
+    route: IntentRoute | None = None
 
     def __post_init__(self) -> None:
         if not self.text or len(self.text) > MAX_MODEL_OUTPUT_CHARS:
@@ -434,6 +487,29 @@ class PromptBuilder(Protocol):
         *,
         model_context_token_budget: int,
     ) -> PromptBuildResult: ...
+
+
+class AgentSessionValidator(Protocol):
+    async def is_owner_session_active(self, owner_id: UUID, session_id: UUID) -> bool: ...
+
+
+class AgentPersistenceStore(Protocol):
+    async def resolve_conversation(self, owner_id: UUID, conversation_id: UUID | None) -> UUID: ...
+
+    async def record_accepted(self, request: AgentRequest) -> bool: ...
+
+    async def record_completed(
+        self,
+        request: AgentRequest,
+        response: AgentResponse,
+        *,
+        provider_name: str | None,
+        model_identifier: str | None,
+        usage: ModelUsage | None,
+        duration_ms: int | None,
+    ) -> None: ...
+
+    async def record_terminal(self, request: AgentRequest, state: AgentState, error: AgentError | None) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

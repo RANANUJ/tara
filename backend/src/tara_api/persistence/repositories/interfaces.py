@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from tara_api.persistence.types import (
+    AgentRequestRecord,
     AuditEventRecord,
     ConfirmationConsumptionRecord,
     ConfirmationDecision,
@@ -29,9 +30,11 @@ from tara_api.persistence.types import (
 
 
 class ConversationRepository(Protocol):
-    async def create(self, label: str | None = None) -> ConversationRecord: ...
+    async def create(self, label: str | None = None, *, owner_id: UUID | None = None) -> ConversationRecord: ...
 
     async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None: ...
+
+    async def get_for_owner(self, conversation_id: UUID, owner_id: UUID) -> ConversationRecord | None: ...
 
     async def list(self, limit: int = 50, offset: int = 0) -> list[ConversationRecord]: ...
 
@@ -48,6 +51,9 @@ class ConversationTurnRepository(Protocol):
         role: ConversationTurnRole,
         status: ConversationTurnStatus,
         content: str,
+        *,
+        agent_request_id: UUID | None = None,
+        safe_metadata: dict[str, object] | None = None,
     ) -> ConversationTurnRecord: ...
 
     async def get_by_id(self, turn_id: UUID) -> ConversationTurnRecord | None: ...
@@ -122,6 +128,45 @@ class StructuredMemoryRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[StructuredMemoryRecord]: ...
+
+
+class AgentRequestRepository(Protocol):
+    async def create(
+        self,
+        request_id: UUID,
+        owner_id: UUID,
+        session_id: UUID,
+        conversation_id: UUID,
+        source: str,
+        idempotency_key_hash: str,
+        status: str,
+        *,
+        connection_id: UUID | None = None,
+        source_transcript_id: UUID | None = None,
+    ) -> AgentRequestRecord: ...
+
+    async def get_by_idempotency(
+        self,
+        owner_id: UUID,
+        session_id: UUID,
+        idempotency_key_hash: str,
+    ) -> AgentRequestRecord | None: ...
+
+    async def get_by_id(self, request_id: UUID) -> AgentRequestRecord | None: ...
+
+    async def update_terminal(
+        self,
+        request_id: UUID,
+        status: str,
+        *,
+        route_category: str | None = None,
+        failure_code: str | None = None,
+        provider_name: str | None = None,
+        model_identifier: str | None = None,
+        usage: dict[str, int] | None = None,
+        duration_ms: int | None = None,
+    ) -> AgentRequestRecord | None: ...
+
 
 
 class PermissionSettingRepository(Protocol):

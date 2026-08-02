@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     agent_context_total_char_limit: int = Field(default=4096, ge=1, le=12000)
     agent_context_estimated_token_limit: int = Field(default=1024, ge=1, le=4096)
     agent_context_allowed_sensitivities: tuple[Literal["normal", "private", "sensitive", "restricted"], ...] = ("normal",)
+    agent_request_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    agent_max_queued_requests: int = Field(default=8, ge=1, le=64)
+    agent_max_concurrent_requests: int = Field(default=1, ge=1, le=8)
+    agent_max_requests_per_connection: int = Field(default=2, ge=1, le=16)
+    agent_max_requests_per_session: int = Field(default=4, ge=1, le=32)
+    agent_max_requests_per_owner: int = Field(default=8, ge=1, le=64)
+    agent_max_terminal_records: int = Field(default=32, ge=1, le=256)
+    agent_terminal_retention_seconds: int = Field(default=300, ge=1, le=3600)
 
     @model_validator(mode="after")
     def validate_stt(self) -> "Settings":
@@ -96,6 +104,12 @@ class Settings(BaseSettings):
             raise ValueError("recent-turn context item limit exceeds the total context limit")
         if self.agent_context_total_char_limit > self.agent_context_estimated_token_limit * 4:
             raise ValueError("context character limit exceeds the estimated token limit")
+        if self.agent_max_concurrent_requests > self.agent_max_queued_requests:
+            raise ValueError("agent concurrency cannot exceed queued request capacity")
+        if self.agent_max_requests_per_connection > self.agent_max_requests_per_session:
+            raise ValueError("connection request limit cannot exceed session request limit")
+        if self.agent_max_requests_per_session > self.agent_max_requests_per_owner:
+            raise ValueError("session request limit cannot exceed owner request limit")
         return self
 
     def secret_values(self) -> tuple[str, ...]:
