@@ -63,6 +63,44 @@ class ScheduledTaskService:
             row.state, row.enabled, row.next_run_at = TaskState.PAUSED.value, False, None
             return True
 
+    async def get(self, context: AuthenticatedOwnerContext, task_id: UUID) -> ScheduledTask | None:
+        async with self._database.unit_of_work() as unit:
+            row = await unit._require_session().scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))  # noqa: SLF001,E501
+            return self._record(row) if row else None
+
+    async def resume(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        return await self._set_state(context, task_id, TaskState.ACTIVE, True)
+
+    async def disable(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        return await self._set_state(context, task_id, TaskState.DISABLED, False)
+
+    async def enable(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        return await self._set_state(context, task_id, TaskState.ACTIVE, True)
+
+    async def cancel(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        return await self._set_state(context, task_id, TaskState.CANCELED, False, idempotent=True)
+
+    async def delete(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        async with self._database.unit_of_work() as unit:
+            session = unit._require_session()  # noqa: SLF001
+            row = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))
+            if row is None:
+                return False
+            await session.delete(row)
+            return True
+
+    async def _set_state(self, context: AuthenticatedOwnerContext, task_id: UUID, state: TaskState, enabled: bool, *, idempotent: bool = False) -> bool:
+        async with self._database.unit_of_work() as unit:
+            session = unit._require_session()  # noqa: SLF001
+            row = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))
+            if row is None:
+                return False
+            if row.state == TaskState.CANCELED.value:
+                return idempotent and state is TaskState.CANCELED
+            row.state, row.enabled = state.value, enabled
+            row.next_run_at = self._record(row).schedule.next_after(datetime.now(UTC)) if enabled else None
+            return True
+
     @staticmethod
     def _record(row: ScheduledTaskModel) -> ScheduledTask:
         schedule = ScheduleDefinition(row.timezone, datetime.fromisoformat(str(row.schedule["run_at"])), row.schedule.get("interval_minutes"), row.schedule.get("occurrence_limit"))
