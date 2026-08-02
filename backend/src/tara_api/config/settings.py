@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     stt_language_hint: Literal["en", "hi"] | None = None
     stt_partial_mode: Literal["provider", "final_only"] = "provider"
     stt_local_model_directory: str | None = None
+    tts_provider: Literal["fake", "piper", "elevenlabs", "disabled"] = "disabled"
+    tts_required: bool = False
+    tts_max_text_characters: int = Field(default=4000, ge=1, le=4000)
+    tts_max_audio_bytes: int = Field(default=8 * 1024 * 1024, ge=1024, le=8 * 1024 * 1024)
+    tts_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    tts_output_encoding: Literal["pcm_s16le"] = "pcm_s16le"
+    tts_output_sample_rate: Literal[16000, 22050, 24000] = 22050
+    tts_output_channels: Literal[1] = 1
+    tts_language_mode: Literal["auto", "en", "hi", "mixed"] = "auto"
+    tts_voice_identifier: str = ""
+    tts_piper_executable: str = ""
+    tts_piper_voice_model_path: str | None = None
+    tts_piper_voice_config_path: str | None = None
+    elevenlabs_api_key: SecretStr = SecretStr("")
+    elevenlabs_model: str = ""
     llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
     llm_required: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -85,6 +100,16 @@ class Settings(BaseSettings):
             raise ValueError("production cannot use the fake STT provider")
         if self.stt_required and self.stt_provider == "disabled":
             raise ValueError("required STT cannot be disabled")
+        if self.environment == "production" and self.tts_provider == "fake":
+            raise ValueError("production cannot use the fake TTS provider")
+        if self.tts_required and self.tts_provider == "disabled":
+            raise ValueError("required TTS cannot be disabled")
+        if self.tts_provider == "piper" and (not self.tts_piper_executable or not self.tts_piper_voice_model_path or not self.tts_voice_identifier):
+            raise ValueError("Piper TTS requires an executable, explicit local voice model, and voice identifier")
+        if self.tts_piper_voice_config_path and self.tts_provider != "piper":
+            raise ValueError("Piper voice configuration requires the Piper provider")
+        if self.tts_provider == "elevenlabs" and (not self.elevenlabs_api_key.get_secret_value() or not self.tts_voice_identifier or not self.elevenlabs_model):
+            raise ValueError("ElevenLabs TTS requires a server API key, voice identifier, and model")
         if self.environment == "production" and self.llm_provider == "fake":
             raise ValueError("production cannot use the fake language-model provider")
         if self.llm_required and self.llm_provider == "disabled":
@@ -114,8 +139,7 @@ class Settings(BaseSettings):
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""
-        secret = self.service_secret.get_secret_value()
-        return (secret,) if secret else ()
+        return tuple(value for value in (self.service_secret.get_secret_value(), self.elevenlabs_api_key.get_secret_value()) if value)
 
     def logging_context(self) -> dict[str, object]:
         """Return settings suitable for structured logging after formatter redaction."""

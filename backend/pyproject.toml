@@ -41,6 +41,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
   "stt_integration: requires an explicitly installed, locally provisioned faster-whisper model",
+  "tts_integration: requires an explicitly installed, locally provisioned Piper voice or opt-in ElevenLabs credentials",
 ]
 
 [tool.ruff]

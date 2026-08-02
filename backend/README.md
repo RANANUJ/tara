@@ -42,6 +42,16 @@ $env:TARA_LLM_TEMPERATURE = "0.2"
 
 M9A supports final-only generation. `TARA_LLM_STREAMING` must remain `false`; no agent deltas are exposed. `TARA_LLM_REQUIRED=false` keeps the provider optional for later health integration. The deterministic `fake` provider is for development/test only and production settings reject it. Standard tests use mocked HTTP and do not require Ollama, a model download, network access, or GPU hardware.
 
+## M10A TTS provider foundation
+
+M10A provides framework-independent, final-only PCM synthesis contracts plus deterministic fake, explicit-local Piper, and optional ElevenLabs adapters. It does not add WebSocket TTS events, browser playback, streaming delivery, barge-in, microphone interruption, or UI.
+
+TTS is disabled by default. Piper requires a manually installed executable and explicit local voice model (and optional config) outside this repository. Tara never downloads a voice/model, interpolates a shell command, uses a fake fallback, or sends audio/text to a cloud provider unless the ElevenLabs provider is explicitly configured with a server-only key.
+
+Use the TARA_TTS_PROVIDER, TARA_TTS_VOICE_IDENTIFIER, TARA_TTS_PIPER_EXECUTABLE, and TARA_TTS_PIPER_VOICE_MODEL_PATH settings only after local provisioning. M10A accepts normalized plain text only—no SSML, client paths, provider arguments, or identity fields. The supported output baseline is final-only mono PCM signed 16-bit little-endian at 16 kHz, 22.05 kHz, or 24 kHz.
+
+Piper uses a bounded subprocess with sanitized errors and child reaping on cancellation; standard tests mock that boundary. The tts_integration marker is reserved for manual real-provider checks and is excluded from ordinary validation.
+
 ## M9D agent transport and readiness
 
 The authenticated v1 WebSocket accepts direct `agent.request` text with an idempotency key and optional conversation UUID, plus owner/session/connection-bound `agent.cancel`. It publishes final-only `agent.started`, `agent.state`, `agent.response`, `agent.canceled`, and sanitized `agent.error` events. There is no REST agent endpoint, token streaming, TTS, tool execution, confirmation, or device action in M9.

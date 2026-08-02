@@ -389,3 +389,15 @@ M9C tests use deterministic fake providers, isolated SQLite databases, and proce
 | LLM health/status | Disabled/fake/unavailable provider health, required/optional readiness semantics, and authenticated safe status fields | `backend/tests/agent/test_llm_health.py`, `backend/tests/test_health.py`, `backend/tests/test_readiness.py` |
 
 M9D standard validation uses only deterministic providers, isolated SQLite files, and mocked local HTTP where adapter coverage requires it. It does not require an Ollama process, model pull, internet access, cloud service, TTS, tool, confirmation, semantic retrieval, or device action.
+
+## 19. M10A TTS Provider Foundation Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| Domain and validation | UTC identities, plain-text normalization, bounded final PCM, format allowlists, alignment, duration/sample consistency, and chunk validation | backend/tests/tts/test_tts_models.py, backend/tests/tts/test_tts_validation.py |
+| Fake provider | Deterministic audio/duration, delay, timeout, cancellation, unavailable, malformed/excessive audio, invalid metadata, and unsupported language/format | backend/tests/tts/test_fake_tts.py |
+| Piper adapter | Explicit local voice, argument-array invocation, stdin text, PCM mapping, non-zero exit/timeout/cancellation handling, child termination, bounded stdout, and sanitized stderr | backend/tests/tts/test_piper_adapter.py |
+| Health and security | Disabled/fake/Piper path/timeout health states, production configuration guards, and TTS-sensitive structured-log redaction | backend/tests/tts/test_tts_health.py, backend/tests/tts/test_tts_security.py |
+| Optional cloud adapter | ElevenLabs final-audio mapping and safe provider error mapping through httpx.MockTransport only | backend/tests/tts/test_elevenlabs_adapter.py |
+
+M10A real provider checks are opt-in under tts_integration. Standard CI uses no Piper executable, voice model, ElevenLabs credential, cloud request, internet access, audio playback, WebSocket event, or frontend capability.

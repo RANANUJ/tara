@@ -1,5 +1,17 @@
 # Tara Implementation Status
 
+## M10A Progress - TTS Domain Contracts and Provider Adapters
+
+- Completed scope: added framework-independent final-only TTS contracts, normalized plain-text/result validation, supported mono PCM signed 16-bit little-endian formats, deterministic fake synthesis, explicit-local Piper subprocess adapter, optional explicit ElevenLabs adapter, and a safe standalone provider-health snapshot.
+- Completed scope: added disabled-by-default settings for TTS limits, output format, language/voice, Piper local provisioning, and optional server-only ElevenLabs configuration. No FastAPI composition, global health/status integration, WebSocket event, delivery queue, playback, barge-in, microphone interruption, tool, confirmation, semantic memory, or frontend work was added.
+- Provider decisions: Piper is the explicit local adapter with no download, shell interpolation, fallback, or retained temp audio. ElevenLabs is approved by the existing architecture as optional cloud TTS and is implemented only behind an explicit provider/key setting with mocked-only standard tests.
+- Files changed: backend/src/tara_api/domain/tts.py, backend/src/tara_api/tts, backend/src/tara_api/config/settings.py, backend/src/tara_api/observability/logging.py, backend/pyproject.toml, backend/.env.example, backend/README.md, backend/tests/tts, docs/SECURITY_MODEL.md, docs/TEST_MATRIX.md, and this status document.
+- Settings added: TARA_TTS controls plus server-only TARA_ELEVENLABS_API_KEY and TARA_ELEVENLABS_MODEL; all are disabled/empty by default in backend/.env.example.
+- Commands and results: focused M10A suite passed (31 tests); targeted M7-M10/auth/health/migration regression set passed (167 tests); Ruff passed; mypy passed (80 source files); full backend suite passed (185 tests); root pnpm validate passed frontend lint/typecheck/tests (8)/build plus backend Ruff/mypy/tests (185).
+- Test results: 0 skipped, 0 xfailed, and 0 failed. The only output warning is the upstream StarletteDeprecationWarning from TestClient. Standard validation used mocked Piper processes and HTTP only; it required no Piper installation, real voice model, ElevenLabs credential, model download, internet access, audio playback, WebSocket event, or frontend voice feature.
+- Limitations: synthesis remains final-only and internal. Real Piper/ElevenLabs checks are manual opt-in (tts_integration); M10A intentionally has no WebSocket delivery, browser playback, streaming chunks, service queue, cancellation endpoint, barge-in, or frontend voice UI.
+- Exact recommended next sub-milestone after final acceptance: M10B - TTS Service, Queue, Streaming Chunks, and Cancellation. Do not start M10B or M11 as part of M10A.
+
 ## M9 Final Acceptance - Complete
 
 ### Completed Scope
