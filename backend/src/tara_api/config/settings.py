@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     tts_max_text_characters: int = Field(default=4000, ge=1, le=4000)
     tts_max_audio_bytes: int = Field(default=8 * 1024 * 1024, ge=1024, le=8 * 1024 * 1024)
     tts_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    tts_max_queued_requests: int = Field(default=8, ge=1, le=64)
+    tts_max_concurrent_requests: int = Field(default=1, ge=1, le=8)
+    tts_max_requests_per_connection: int = Field(default=2, ge=1, le=16)
+    tts_max_requests_per_session: int = Field(default=4, ge=1, le=32)
+    tts_max_requests_per_owner: int = Field(default=8, ge=1, le=64)
+    tts_max_chunk_bytes: int = Field(default=64 * 1024, ge=2, le=64 * 1024)
+    tts_max_terminal_records: int = Field(default=32, ge=1, le=256)
+    tts_terminal_retention_seconds: int = Field(default=300, ge=1, le=3600)
+    tts_max_retained_audio_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
     tts_output_encoding: Literal["pcm_s16le"] = "pcm_s16le"
     tts_output_sample_rate: Literal[16000, 22050, 24000] = 22050
     tts_output_channels: Literal[1] = 1
@@ -110,6 +119,16 @@ class Settings(BaseSettings):
             raise ValueError("Piper voice configuration requires the Piper provider")
         if self.tts_provider == "elevenlabs" and (not self.elevenlabs_api_key.get_secret_value() or not self.tts_voice_identifier or not self.elevenlabs_model):
             raise ValueError("ElevenLabs TTS requires a server API key, voice identifier, and model")
+        if self.tts_max_concurrent_requests > self.tts_max_queued_requests:
+            raise ValueError("TTS concurrency cannot exceed queued request capacity")
+        if self.tts_max_requests_per_connection > self.tts_max_requests_per_session:
+            raise ValueError("connection TTS request limit cannot exceed session request limit")
+        if self.tts_max_requests_per_session > self.tts_max_requests_per_owner:
+            raise ValueError("session TTS request limit cannot exceed owner request limit")
+        if self.tts_max_chunk_bytes % (self.tts_output_channels * 2):
+            raise ValueError("TTS chunk bytes must align to the output frame size")
+        if self.tts_max_retained_audio_bytes < self.tts_max_audio_bytes:
+            raise ValueError("TTS retained-audio budget must allow one valid result")
         if self.environment == "production" and self.llm_provider == "fake":
             raise ValueError("production cannot use the fake language-model provider")
         if self.llm_required and self.llm_provider == "disabled":

@@ -1,6 +1,6 @@
 # Tara API
 
-This Python 3.12 package provides Tara's authenticated transport, foreground audio boundary, optional local STT, and M9 final-only local text-agent loop. It does not implement tools, confirmations, TTS, semantic memory, or product UI.
+This Python 3.12 package provides Tara's authenticated transport, foreground audio boundary, optional local STT, final-only local text-agent loop, and an internal bounded final-response TTS service. It does not implement tools, confirmations, TTS WebSocket delivery, browser playback, barge-in, semantic memory, or product UI.
 
 ## M8 local STT (optional)
 
@@ -51,6 +51,14 @@ TTS is disabled by default. Piper requires a manually installed executable and e
 Use the TARA_TTS_PROVIDER, TARA_TTS_VOICE_IDENTIFIER, TARA_TTS_PIPER_EXECUTABLE, and TARA_TTS_PIPER_VOICE_MODEL_PATH settings only after local provisioning. M10A accepts normalized plain text only—no SSML, client paths, provider arguments, or identity fields. The supported output baseline is final-only mono PCM signed 16-bit little-endian at 16 kHz, 22.05 kHz, or 24 kHz.
 
 Piper uses a bounded subprocess with sanitized errors and child reaping on cancellation; standard tests mock that boundary. The tts_integration marker is reserved for manual real-provider checks and is excluded from ordinary validation.
+
+## M10B TTS service queue and retention
+
+M10B accepts only a server-resolved completed final agent response. It binds a synthesis request to its owner, authenticated session, optional connection, conversation, source agent request, optional assistant turn, configured provider, voice, language, format, and a hashed derived idempotency identity. It accepts no caller-supplied synthesis text or identity.
+
+The process-local FIFO registry uses `TARA_TTS_MAX_QUEUED_REQUESTS`, `TARA_TTS_MAX_CONCURRENT_REQUESTS`, and the connection/session/owner pending limits. `TARA_TTS_MAX_CHUNK_BYTES` splits only validated final raw PCM after synthesis; this is post-synthesis transport preparation, not real-time streaming, and it never creates standalone WAV fragments.
+
+Generated audio remains in bounded process memory only, governed by `TARA_TTS_MAX_RETAINED_AUDIO_BYTES`. It is released after consumption, cancellation, timeout, terminal expiry, eviction, or shutdown. No text, audio bytes, temporary audio files, provider stderr, model paths, or credentials are persisted in SQLite or logged. M10B has no WebSocket delivery, playback, barge-in, or UI integration.
 
 ## M9D agent transport and readiness
 

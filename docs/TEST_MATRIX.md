@@ -401,3 +401,15 @@ M9D standard validation uses only deterministic providers, isolated SQLite files
 | Optional cloud adapter | ElevenLabs final-audio mapping and safe provider error mapping through httpx.MockTransport only | backend/tests/tts/test_elevenlabs_adapter.py |
 
 M10A real provider checks are opt-in under tts_integration. Standard CI uses no Piper executable, voice model, ElevenLabs credential, cloud request, internet access, audio playback, WebSocket event, or frontend capability.
+
+## 20. M10B TTS Service, Queue, Chunking, and Cancellation Coverage
+
+| Area | Implemented evidence | Test files |
+| --- | --- | --- |
+| Agent-response service boundary | Completed server-resolved source only, normalized text, typed source/provider failures, and one provider call maximum | `backend/tests/tts/test_tts_service.py` |
+| Queue and idempotency | FIFO work, bounded concurrency, connection limit, duplicate suppression, and owner/session isolation | `backend/tests/tts/test_tts_queue.py`, `backend/tests/tts/test_tts_idempotency.py` |
+| Chunking and retention | Frame-aligned post-synthesis PCM chunk metadata, no invalid fragments, transient audio consumption, and shutdown release | `backend/tests/tts/test_tts_chunking.py`, `backend/tests/tts/test_tts_retention.py` |
+| Cancellation and cleanup | Active cancellation, timeout terminal state, connection/session cancellation seams, and worker cleanup | `backend/tests/tts/test_tts_cancellation.py`, `backend/tests/tts/test_tts_cleanup.py` |
+| Privacy and isolation | Cross-connection source rejection and structured-log redaction of text/audio/token/stderr fields | `backend/tests/tts/test_tts_service_security.py` |
+
+M10B standard validation uses deterministic fakes and mocked provider boundaries only. It requires no Piper installation, ElevenLabs credential or request, model download, internet access, WebSocket delivery, playback, barge-in, or frontend voice feature.
