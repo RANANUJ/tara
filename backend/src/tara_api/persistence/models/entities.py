@@ -311,6 +311,14 @@ class ScheduledTaskModel(TimestampedModel, Base):
     last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    capability_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    target_summary: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    parameters_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    risk_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confirmation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    confirmation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confirmation_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    confirmation_binding_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class SafeServiceConfigurationModel(TimestampedModel, Base):
