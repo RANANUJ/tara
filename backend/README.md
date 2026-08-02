@@ -2,6 +2,14 @@
 
 This Python 3.12 package provides Tara's authenticated transport, foreground audio boundary, optional local STT, final-only local text-agent loop, and an internal bounded final-response TTS service. It does not implement tools, confirmations, TTS WebSocket delivery, browser playback, barge-in, semantic memory, or product UI.
 
+## M11A foreground wake-word boundary
+
+M11A adds disabled-by-default, foreground-only wake-word contracts, a deterministic fake detector, a bounded service, an M7 frame-adapter seam, and a browser lifecycle controller. No local production detector has been selected, so no wake-word model dependency, model path, auto-download, cloud fallback, or microphone activation is added.
+
+Wake-word detection may run only while the page is open, the owner has enabled it, microphone permission and existing foreground capture remain active, and the authenticated socket remains connected. Hidden/suspended pages, permission revocation, device changes, socket close, and TTS playback suspend or stop detection. Standard web deployments do not support native background, screen-off, or locked-device wake word. A detection only creates an internal ready/listening signal; it never creates an agent request, tool call, or action.
+
+Use `TARA_WAKEWORD_PROVIDER=disabled` and `TARA_WAKEWORD_ENABLED=false` by default. The `fake` provider is deterministic, offline, and development/test-only. `TARA_WAKEWORD_PHRASE`, threshold, consecutive detections, debounce, cooldown, frame limits, and foreground enforcement are validated at startup. Standard tests require no microphone, model, network access, or download.
+
 ## M8 local STT (optional)
 
 Standard development and CI do not install `faster-whisper`, download models, require a GPU, or access the internet. Install the optional adapter only when manually testing an explicitly provisioned local model:

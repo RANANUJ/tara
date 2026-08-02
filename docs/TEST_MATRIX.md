@@ -423,3 +423,16 @@ M10B standard validation uses deterministic fakes and mocked provider boundaries
 | Browser playback | Mocked Web Audio activation, ordered chunk acceptance, fail-closed ordering, explicit Stop, VAD barge-in, and suspended context | `frontend/tests/unit/tts-playback.test.ts` |
 
 Standard M10C validation uses fake providers and mocked Web Audio only. It performs no Piper install, ElevenLabs request, model download, internet access, real microphone/speaker use, background capture, wake-word operation, or native-device action.
+
+## 22. M11A Foreground Wake-Word Foundation Coverage
+
+| Area | Implemented evidence | Test files |
+| --- | --- | --- |
+| Domain contracts and settings | UTC timestamps, confidence/phrase/frame/configuration bounds, immutable audio-session identity, M7 frame binding, disabled default, and production-fake rejection | `backend/tests/wakeword/test_wakeword_models.py` |
+| Deterministic fake detector | Trigger/no-trigger/repeated behavior, delay, cancellation, unavailable state, and malformed output without network or microphone access | `backend/tests/wakeword/test_fake_wakeword.py` |
+| Foreground service | Disabled behavior, confidence/consecutive policy, debounce/cooldown, stale-frame rejection, bounded metadata buffer, provider isolation/recovery, and no agent handoff | `backend/tests/wakeword/test_wakeword_service.py`, `backend/tests/wakeword/test_wakeword_debounce.py` |
+| Identity isolation | Owner/session/connection/audio-session state isolation, cleanup, revocation handling, reconnect-safe new state, and concurrent per-session detection | `backend/tests/wakeword/test_wakeword_isolation.py` |
+| Health and privacy | Disabled/fake/unavailable non-activating snapshot, truthful foreground capability flags, safe failures, and log redaction/no service logging | `backend/tests/wakeword/test_wakeword_health.py`, `backend/tests/wakeword/test_wakeword_security.py` |
+| Browser lifecycle controller | Existing-capture gate, hidden-tab suspend, conditional resume, permission/device/socket cleanup, TTS suspend, and no background capability claim | `frontend/tests/unit/wakeword.test.ts` |
+
+M11A standard validation uses deterministic fakes and mocked browser-state callbacks only. It requires no real microphone, wake-word model, model download, internet access, background capture, WebSocket wake-word event, native service, or device action.

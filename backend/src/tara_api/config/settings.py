@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tara_api.domain.wakeword import WakeWordConfiguration
+
 Environment = Literal["development", "test", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -78,6 +80,18 @@ class Settings(BaseSettings):
     tts_piper_voice_config_path: str | None = None
     elevenlabs_api_key: SecretStr = SecretStr("")
     elevenlabs_model: str = ""
+    wakeword_provider: Literal["fake", "disabled"] = "disabled"
+    wakeword_enabled: bool = False
+    wakeword_phrase: str = "tara"
+    wakeword_confidence_threshold: float = Field(default=0.85, ge=0, le=1)
+    wakeword_minimum_consecutive_detections: int = Field(default=2, ge=1, le=10)
+    wakeword_cooldown_seconds: float = Field(default=3, ge=0, le=60)
+    wakeword_debounce_seconds: float = Field(default=1, ge=0, le=10)
+    wakeword_frame_duration_ms: int = Field(default=20, ge=1, le=1000)
+    wakeword_maximum_buffered_frames: int = Field(default=8, ge=1, le=128)
+    wakeword_language_mode: Literal["auto", "en", "hi", "mixed"] = "auto"
+    wakeword_foreground_only: bool = True
+    wakeword_maximum_frame_age_seconds: float = Field(default=2, gt=0, le=30)
     llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
     llm_required: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -130,6 +144,24 @@ class Settings(BaseSettings):
             raise ValueError("TTS chunk bytes must align to the output frame size")
         if self.tts_max_retained_audio_bytes < self.tts_max_audio_bytes:
             raise ValueError("TTS retained-audio budget must allow one valid result")
+        if self.environment == "production" and self.wakeword_provider == "fake":
+            raise ValueError("production cannot use the fake wake-word provider")
+        if self.wakeword_enabled and self.wakeword_provider == "disabled":
+            raise ValueError("enabled wake word requires a configured provider")
+        WakeWordConfiguration(
+            provider=self.wakeword_provider,
+            phrase=self.wakeword_phrase,
+            enabled=self.wakeword_enabled,
+            confidence_threshold=self.wakeword_confidence_threshold,
+            minimum_consecutive_detections=self.wakeword_minimum_consecutive_detections,
+            cooldown_seconds=self.wakeword_cooldown_seconds,
+            debounce_seconds=self.wakeword_debounce_seconds,
+            frame_duration_ms=self.wakeword_frame_duration_ms,
+            maximum_buffered_frames=self.wakeword_maximum_buffered_frames,
+            language_mode=self.wakeword_language_mode,
+            foreground_only=self.wakeword_foreground_only,
+            maximum_frame_age_seconds=self.wakeword_maximum_frame_age_seconds,
+        )
         if self.environment == "production" and self.llm_provider == "fake":
             raise ValueError("production cannot use the fake language-model provider")
         if self.llm_required and self.llm_provider == "disabled":

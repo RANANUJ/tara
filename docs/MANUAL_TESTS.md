@@ -403,3 +403,13 @@ The following checks are pending and must not be marked passed until performed o
 - Complete a voice turn and verify only `transcript.final` starts an agent request. Cancel/fail/timeout STT turns and verify none starts an agent request.
 - Toggle optional versus required LLM configuration while the local runtime is unavailable. Verify status is content-minimized, optional readiness remains available, required readiness fails, and no health check triggers generation or model pull.
 - Inspect logs, database metadata, and status output using synthetic canaries. Verify prompts, transcript text, provider exception text, URLs, credentials, and model paths are absent.
+
+## 16. M11A Foreground Wake-Word Checks (Pending)
+
+- Enable and disable wake word only after starting foreground microphone capture; verify no microphone prompt or capture begins from wake-word enablement alone.
+- With a selected future local detector, test the exact phrase, similar phrase, background noise, multiple speakers, near-threshold confidence, and repeated phrase during the configured cooldown. Record false positives/negatives without using sensitive speech.
+- Test wake phrase during Tara playback with speakers and headphones. Verify playback does not create a wake loop, explicit Stop and VAD barge-in remain available, and no duplicate cancellation occurs.
+- Hide/minimize the tab, suspend the browser audio context, lock the screen, revoke microphone permission, change input device, disconnect the socket, and reconnect. Verify detection stops or remains suspended until foreground prerequisites are restored.
+- Observe CPU/memory over a foreground session and inspect browser/backend storage and logs with synthetic canaries. Verify no PCM, wake audio, transcripts, credentials, model paths, or provider exception text is retained.
+
+Screen-off, locked-device, minimized/suspended-tab reliability, and native background wake word are unsupported in M11A, not failed implementation. Do not mark these manual checks passed until a real explicitly provisioned local detector and supported browsers are tested.
