@@ -97,6 +97,7 @@ def implemented_health_checks(
     stt_check: HealthCheck | None = None,
     llm_check: HealthCheck | None = None,
     tts_check: HealthCheck | None = None,
+    wakeword_check: HealthCheck | None = None,
 ) -> tuple[HealthCheck, ...]:
     async def application() -> tuple[HealthState, str | None]:
         return HealthState.HEALTHY, None
@@ -118,7 +119,7 @@ def implemented_health_checks(
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version LIMIT 1"))
         except (OSError, SQLAlchemyError):
             return HealthState.UNAVAILABLE, "Schema status is unavailable."
-        return (HealthState.HEALTHY, None) if revision == "20260801_0004" else (HealthState.DEGRADED, "Schema revision is not current.")
+        return (HealthState.HEALTHY, None) if revision == "20260802_0006" else (HealthState.DEGRADED, "Schema revision is not current.")
 
     checks: tuple[HealthCheck, ...] = (
         CallableHealthCheck(DependencyName.APPLICATION, HealthSeverity.REQUIRED, application),
@@ -126,4 +127,4 @@ def implemented_health_checks(
         CallableHealthCheck(DependencyName.AUTHENTICATION, HealthSeverity.REQUIRED, authentication),
         CallableHealthCheck(DependencyName.SCHEMA, HealthSeverity.OPTIONAL, schema),
     )
-    return checks + tuple(check for check in (stt_check, llm_check, tts_check) if check is not None)
+    return checks + tuple(check for check in (stt_check, llm_check, tts_check, wakeword_check) if check is not None)

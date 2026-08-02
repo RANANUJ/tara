@@ -20,6 +20,7 @@ def test_initial_migration_upgrades_an_empty_database(database_path: Path) -> No
         "conversations",
         "conversation_turns",
         "structured_memories",
+        "memory_index_outbox",
         "permission_settings",
         "pending_confirmations",
         "confirmation_consumptions",

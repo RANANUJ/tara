@@ -35,6 +35,7 @@ class StatusResponse(BaseModel):
     llm: dict[str, object]
     agent: dict[str, object]
     tts: dict[str, object]
+    wakeword: dict[str, object]
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -47,6 +48,8 @@ async def service_status(
     stt = await request.app.state.stt_health.snapshot()
     llm = await request.app.state.llm_health.snapshot()
     tts = await request.app.state.tts_health.snapshot()
+    wakeword = await request.app.state.wakeword_health.snapshot()
+    wakeword_active_connections = await request.app.state.wakeword_service.active_connections()
     queued, active, terminal = await request.app.state.agent_registry.counts()
     tts_queued, tts_active, _tts_terminal, retained_audio = await request.app.state.tts_registry.counts()
     return StatusResponse(
@@ -113,5 +116,23 @@ async def service_status(
             "tts_retained_audio_bytes": retained_audio,
             "tts_max_queue": request.app.state.settings.tts_max_queued_requests,
             "tts_max_concurrency": request.app.state.settings.tts_max_concurrent_requests,
+        },
+        wakeword={
+            "wakeword_configured": wakeword.configured,
+            "wakeword_enabled": wakeword.enabled,
+            "wakeword_required": request.app.state.settings.wakeword_required,
+            "wakeword_provider": wakeword.provider,
+            "wakeword_state": wakeword.state.value,
+            "wakeword_ready": wakeword.ready,
+            "wakeword_phrase_configured": wakeword.phrase_configured,
+            "wakeword_foreground_only": wakeword.foreground_only,
+            "wakeword_offline_capable": wakeword.offline_capable,
+            "wakeword_streaming_audio_supported": wakeword.streaming_audio_supported,
+            "wakeword_continuous_while_page_open": wakeword.continuous_while_page_open,
+            "wakeword_native_background_supported": wakeword.native_background_supported,
+            "wakeword_screen_off_supported": wakeword.screen_off_supported,
+            "wakeword_locked_device_supported": wakeword.locked_device_supported,
+            "wakeword_active_connections": wakeword_active_connections,
+            "wakeword_max_buffered_frames": request.app.state.settings.wakeword_maximum_buffered_frames,
         },
     )

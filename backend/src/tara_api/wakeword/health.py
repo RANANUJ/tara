@@ -6,6 +6,7 @@ import asyncio
 import time
 from datetime import UTC, datetime
 
+from tara_api.domain.health import HealthState
 from tara_api.domain.wakeword import (
     WakeWordConfiguration,
     WakeWordDetector,
@@ -16,11 +17,12 @@ from tara_api.domain.wakeword import (
 
 
 class LocalWakeWordHealthProvider:
-    def __init__(self, configuration: WakeWordConfiguration, detector: WakeWordDetector | None, *, environment: str, timeout_seconds: float) -> None:
+    def __init__(self, configuration: WakeWordConfiguration, detector: WakeWordDetector | None, *, required: bool = False, environment: str, timeout_seconds: float) -> None:
         if timeout_seconds <= 0:
             raise ValueError("wake-word health timeout must be positive")
         self._configuration = configuration
         self._detector = detector
+        self._required = required
         self._environment = environment
         self._timeout_seconds = timeout_seconds
 
@@ -38,6 +40,14 @@ class LocalWakeWordHealthProvider:
         except Exception:
             return self._result(True, self._provider_name(), WakeWordState.UNAVAILABLE, False, WakeWordError.PROVIDER_UNAVAILABLE, checked_at, started)
         return self._result(True, self._provider_name(), WakeWordState.IDLE if ready else WakeWordState.UNAVAILABLE, ready, None if ready else WakeWordError.PROVIDER_UNAVAILABLE, checked_at, started)
+
+    async def dependency(self) -> tuple[HealthState, str | None]:
+        snapshot = await self.snapshot()
+        if snapshot.ready or snapshot.state is WakeWordState.DISABLED:
+            return HealthState.HEALTHY, None
+        if self._required:
+            return HealthState.UNAVAILABLE, "Wake word is unavailable."
+        return HealthState.DEGRADED, None
 
     def _provider_name(self) -> str:
         return "fake-development" if self._detector is not None and self._detector.name == "fake" else self._configuration.provider

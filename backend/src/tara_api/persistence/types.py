@@ -61,6 +61,21 @@ class RetentionCategory(StrEnum):
     CASUAL = "casual"
 
 
+class MemoryIndexOperation(StrEnum):
+    """Idempotent semantic-index work derived from authoritative SQLite memory."""
+
+    UPSERT = "upsert"
+    DELETE = "delete"
+
+
+class MemoryTaskStatus(StrEnum):
+    """Explicit state for task-category memories; non-task memories omit it."""
+
+    OPEN = "open"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class PermissionGrantState(StrEnum):
     """Default-deny capability grant states."""
 
@@ -157,6 +172,7 @@ class StructuredMemoryRecord:
     expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    task_status: MemoryTaskStatus | None = None
 
     def to_export_dict(self) -> dict[str, str | bool | None]:
         """Return a JSON-serializable export representation without internal ORM state."""
@@ -171,7 +187,18 @@ class StructuredMemoryRecord:
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "task_status": self.task_status.value if self.task_status else None,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryIndexOutboxRecord:
+    id: UUID
+    memory_id: UUID
+    operation: MemoryIndexOperation
+    created_at: datetime
+    processed_at: datetime | None
+    attempts: int
 
 
 @dataclass(frozen=True, slots=True)

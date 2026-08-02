@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     elevenlabs_model: str = ""
     wakeword_provider: Literal["fake", "disabled"] = "disabled"
     wakeword_enabled: bool = False
+    wakeword_required: bool = False
     wakeword_phrase: str = "tara"
     wakeword_confidence_threshold: float = Field(default=0.85, ge=0, le=1)
     wakeword_minimum_consecutive_detections: int = Field(default=2, ge=1, le=10)
@@ -92,6 +93,10 @@ class Settings(BaseSettings):
     wakeword_language_mode: Literal["auto", "en", "hi", "mixed"] = "auto"
     wakeword_foreground_only: bool = True
     wakeword_maximum_frame_age_seconds: float = Field(default=2, gt=0, le=30)
+    wakeword_timeout_seconds: float = Field(default=2, ge=1, le=30)
+    memory_semantic_provider: Literal["chromadb", "disabled"] = "disabled"
+    memory_chroma_directory: str = "./data/chroma"
+    memory_scheduler_enabled: bool = True
     llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
     llm_required: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -148,6 +153,10 @@ class Settings(BaseSettings):
             raise ValueError("production cannot use the fake wake-word provider")
         if self.wakeword_enabled and self.wakeword_provider == "disabled":
             raise ValueError("enabled wake word requires a configured provider")
+        if self.wakeword_required and self.wakeword_provider == "disabled":
+            raise ValueError("required wake word cannot be disabled")
+        if self.memory_semantic_provider == "chromadb" and not self.memory_chroma_directory.strip():
+            raise ValueError("ChromaDB requires an explicit local directory")
         WakeWordConfiguration(
             provider=self.wakeword_provider,
             phrase=self.wakeword_phrase,

@@ -255,6 +255,8 @@ M6 Pydantic schemas reject unknown envelope fields and unsupported protocol vers
 | `session.ping` | empty object | Application-level transport heartbeat |
 | `session.close` | empty object | Requests graceful close |
 | `client.ack` | `event_id` UUID | Acknowledges a server transport event |
+| `wakeword.enable` | empty object | Enables detection only for the existing authenticated foreground audio session |
+| `wakeword.disable` | empty object | Cancels detection and clears connection-bound wake-word state |
 
 The server must not treat silence, disconnect, repeated wake phrases, or arbitrary transcript text as implicit confirmation. Only `confirmation.respond` or the REST approval endpoint resolves a challenge.
 
@@ -267,6 +269,9 @@ The server must not treat silence, disconnect, repeated wake phrases, or arbitra
 | `session.error` | stable code, safe message | Reports protocol/transport failure without internals |
 | `session.closing` | safe reason | Announces graceful close |
 | `server.ack` | referenced client event ID | Confirms `client.ack` |
+| `wakeword.state` | safe state, foreground-only flag, optional audio-session ID | Reports lifecycle without audio or provider internals |
+| `wakeword.detected` | server-issued event ID, audio-session ID, confidence, detected time | Reports a bounded detection; never creates an agent request |
+| `wakeword.error` | stable code, safe message | Reports a sanitized detection failure |
 
 ## 16. WebSocket Ordering and Recovery
 

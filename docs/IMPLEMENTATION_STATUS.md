@@ -1,18 +1,17 @@
 # Tara Implementation Status
 
-## M11A Progress - Foreground Wake-Word Contracts, Detection Service, and Capability Boundaries
+## M12 Complete - Retention, Consolidation, Export, and Hard Delete
 
-- Completed scope: added framework-independent wake-word contracts, immutable owner/session/connection/audio-session identity, UTC-bound audio/detection/event/health models, stable safe errors, deterministic phrase normalization, and bounded confidence/frame/configuration validation. The service consumes only already validated M7-style foreground PCM through a pure adapter seam; it retains bounded sequence metadata only and never persists raw audio.
-- Provider decision: no real local wake-word engine is selected for M11A. The only adapter is `FakeWakeWordDetector`, an offline deterministic development/test provider with no microphone, network, model, or download dependency. Wake word is disabled by default; production fake configuration is rejected. There is no hidden fake fallback, cloud fallback, model path, or automatic provisioning.
-- Capability boundary: foreground web is the sole supported runtime. Streaming and continuous listening are true only while an open visible page has user-enabled wake word, existing permitted capture, and an authenticated connected socket. Native background, screen-off, and locked-device are always false. The minimal frontend controller stops or suspends for hidden/suspended state, permission revocation, device changes, socket close/unload, and TTS playback; detection can only signal ready/listening state and cannot submit an agent request, tool, action, confirmation, or permission change.
-- Safety and isolation: per-owner/session/connection/audio-session state applies confidence threshold, minimum consecutive detections, debounce, stale-frame rejection, and per-session cooldown. Cleanup is idempotent and targeted to connection/session/owner/audio session. Provider errors recover safely for later frames. Normal logs contain no wake PCM, phrase audio, transcript, agent text, credentials, model path, or provider exception text.
-- Deliberately deferred: no WebSocket wake-word events, `main.py` composition, global readiness/status integration, actual detector adapter, real microphone detection, screen-off/locked-device behavior, native background service, service-worker capture, proactive behavior, device action, M11B, or M12 work.
-- Files changed: `backend/src/tara_api/domain/wakeword.py`, `backend/src/tara_api/wakeword/__init__.py`, `backend/src/tara_api/wakeword/audio.py`, `backend/src/tara_api/wakeword/fake.py`, `backend/src/tara_api/wakeword/health.py`, `backend/src/tara_api/wakeword/service.py`, `backend/src/tara_api/config/settings.py`, `backend/tests/wakeword`, `frontend/lib/wakeword.ts`, `frontend/tests/unit/wakeword.test.ts`, `backend/.env.example`, `backend/README.md`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, `docs/MANUAL_TESTS.md`, and this status document.
-- Configuration: `TARA_WAKEWORD_PROVIDER=disabled`, `TARA_WAKEWORD_ENABLED=false`, phrase, threshold, consecutive-detection, cooldown, debounce, frame duration, buffer, language, foreground-only, and stale-frame settings are documented in `backend/.env.example`. No personal path or secret is added.
-- Commands and results: focused `python -m pytest backend/tests/wakeword -q` passed (17); required voice/transport/auth/health/migration regression selection passed (201); `python -m ruff check backend` passed; `python -m mypy backend/src` passed (90 source files); full `python -m pytest backend/tests -q` passed (221); frontend lint/typecheck/tests (17)/production build passed; root `pnpm validate` passed frontend validation/build plus backend Ruff/mypy/tests (221).
-- Test results: 0 skipped, 0 xfailed, and 0 failed. The only output warning is the existing upstream `StarletteDeprecationWarning` from `TestClient`. Standard acceptance uses deterministic fakes and mocked browser-state callbacks only: no real microphone, wake-word model, model download, network access, background runtime, or native-device action.
-- Manual checks remaining: exact/similar phrase, noise/multiple-speaker/threshold behavior, cooldown, TTS speakers/headphones feedback, hidden/minimized/suspended page, lock screen, permission/device change, socket reconnect, CPU/memory, and privacy inspection with a future explicitly provisioned local detector. Screen-off, locked-device, and reliable background results are unsupported, not failed implementation.
-- Exact recommended next sub-milestone: M11B - Wake Word Transport, Status Integration, and Native Background Architecture Boundary. Do not mark M11 complete and do not begin M11B or M12 as part of M11A.
+- Completed scope: M12 adds APScheduler-compatible hourly retention and daily consolidation services, 30-day casual expiry defaults, pinned exemption, confirmed hard deletion, and short-lived confirmed export artifacts. SQLite remains authoritative; semantic-index delete work uses the transactional outbox, while staged export data is scrubbed on expiry or explicit removal.
+- Files changed: M11/M12 changes span wake-word transport/status/lifecycle, `backend/src/tara_api/memory`, persistence outbox/task-status models and migrations `20260802_0005`/`20260802_0006`, configuration, health, tests, and the memory/wake-word contract and boundary documents.
+- Validation: `pytest backend/tests -q` passed (226); `pnpm validate` passed frontend lint/typecheck/tests (17)/production build and backend Ruff/mypy/tests (226). The only output warning is the existing upstream `StarletteDeprecationWarning` from `TestClient`.
+- Remaining limits: no real wake-word engine, native background audio, screen-off/locked-device capture, or public memory-product API is claimed. M13 is the next milestone.
+
+## M11 Complete - Structured and Semantic Memory plus Foreground Wake-Word Transport
+
+- Completed scope: authenticated foreground wake-word enable/disable, state/detected/error delivery, audio-session binding, TTS-aware suspension, disconnect cleanup, readiness/status integration, and an explicit native-background boundary. Detection remains foreground-only and never triggers an agent or action.
+- Memory scope: SQLite structured memory has provenance, categories, pinning, expiry, task status, deterministic bounded browse/context ordering, optional local ChromaDB derived indexing, a transactional index outbox, SQLite-authorized semantic filtering, unavailable-index lexical fallback, and rebuild support.
+- Validation: deterministic fakes and isolated SQLite cover wake-word and semantic-index boundaries without microphone, model download, or network access.
 
 ## M10 Final Acceptance - Complete
 
@@ -245,8 +244,8 @@ Product implementation has not started. M1 provides the monorepo/tooling foundat
 | M8 — Streaming Speech-to-Text | In final acceptance | Implementation and focused/full tests pass; final completion is blocked only by recorded baseline/environment validation issues |
 | M9 — Local Text Agent Loop | Not started | Ollama not integrated |
 | M10 — Streaming TTS and Barge-In | Not started | ElevenLabs/Piper not integrated |
-| M11 — Structured and Semantic Memory | Not started | SQLite/ChromaDB memory not implemented |
-| M12 — Retention, Consolidation, Export, and Hard Delete | Not started | No lifecycle jobs exist |
+| M11 — Structured and Semantic Memory | Complete | Authoritative SQLite memory, ChromaDB-derived index/outbox, bounded retrieval, and rebuild support |
+| M12 — Retention, Consolidation, Export, and Hard Delete | Complete | Scheduled lifecycle services, retention, short-lived exports, and confirmed hard-delete paths |
 | M13 — Capability Registry and Read-Only Tools | Not started | No tools exist |
 | M14 — Confirmation Gate and Consequential Tool Harness | Not started | No safety state machine exists |
 | M15 — Two-Tier Routing and Multi-Step Agent | Not started | No agent loop exists |

@@ -4,6 +4,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import cast
 
 import uvicorn
@@ -39,6 +40,10 @@ from tara_api.observability.logging import configure_logging, log_settings_loade
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.agent_store import SqlAlchemyAgentPersistenceStore
 from tara_api.persistence.database import Database
+from tara_api.memory.lifecycle import MemoryLifecycleScheduler, MemoryLifecycleService
+from tara_api.memory.exports import MemoryExportService
+from tara_api.memory.semantic import ChromaSemanticMemoryIndex, UnavailableSemanticMemoryIndex
+from tara_api.memory.service import MemoryService
 from tara_api.transport.registry import InMemoryConnectionRegistry, RegistryEventPublisher
 from tara_api.transport.tickets import InMemoryConnectionTicketService
 from tara_api.stt.faster_whisper import FasterWhisperSpeechToTextProvider
@@ -51,6 +56,10 @@ from tara_api.tts.piper import PiperTextToSpeechProvider
 from tara_api.tts.registry import SynthesisRequestRegistry
 from tara_api.tts.service import TextToSpeechService
 from tara_api.tts.source import InMemoryApprovedAgentResponseSource
+from tara_api.domain.wakeword import WakeWordConfiguration, WakeWordDetector
+from tara_api.wakeword.fake import FakeWakeWordDetector
+from tara_api.wakeword.health import LocalWakeWordHealthProvider
+from tara_api.wakeword.service import WakeWordService
 
 
 @asynccontextmanager
@@ -58,9 +67,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Start and dispose the database without applying migrations at runtime."""
     database: Database = app.state.database
     await database.start()
+    if app.state.settings.memory_scheduler_enabled:
+        app.state.memory_lifecycle_scheduler.start()
     try:
         yield
     finally:
+        app.state.memory_lifecycle_scheduler.shutdown()
         await app.state.tts_service.shutdown()
         await app.state.agent_service.shutdown()
         await database.dispose()
@@ -83,6 +95,19 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     )
     app.state.settings = resolved_settings
     app.state.database = database or Database(resolved_settings.database_url)
+    app.state.memory_semantic_index = (
+        ChromaSemanticMemoryIndex(Path(resolved_settings.memory_chroma_directory))
+        if resolved_settings.memory_semantic_provider == "chromadb"
+        else UnavailableSemanticMemoryIndex()
+    )
+    app.state.memory_service = MemoryService(
+        app.state.database,
+        app.state.memory_semantic_index,
+        now=lambda: datetime.now(UTC),
+    )
+    app.state.memory_lifecycle = MemoryLifecycleService(app.state.memory_service)
+    app.state.memory_lifecycle_scheduler = MemoryLifecycleScheduler(app.state.memory_lifecycle)
+    app.state.memory_exports = MemoryExportService(app.state.memory_service, now=lambda: datetime.now(UTC))
     app.state.authentication_store = SqlAlchemyAuthenticationStore(app.state.database)
     app.state.authentication_service = AuthenticationService(
         app.state.authentication_store,
@@ -186,6 +211,33 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         language_mode=resolved_settings.tts_language_mode,
         timeout_seconds=resolved_settings.health_check_timeout_ms / 1000,
     )
+    wakeword_configuration = WakeWordConfiguration(
+        provider=resolved_settings.wakeword_provider,
+        phrase=resolved_settings.wakeword_phrase,
+        enabled=resolved_settings.wakeword_enabled,
+        confidence_threshold=resolved_settings.wakeword_confidence_threshold,
+        minimum_consecutive_detections=resolved_settings.wakeword_minimum_consecutive_detections,
+        cooldown_seconds=resolved_settings.wakeword_cooldown_seconds,
+        debounce_seconds=resolved_settings.wakeword_debounce_seconds,
+        frame_duration_ms=resolved_settings.wakeword_frame_duration_ms,
+        maximum_buffered_frames=resolved_settings.wakeword_maximum_buffered_frames,
+        language_mode=resolved_settings.wakeword_language_mode,
+        foreground_only=resolved_settings.wakeword_foreground_only,
+        maximum_frame_age_seconds=resolved_settings.wakeword_maximum_frame_age_seconds,
+    )
+    app.state.wakeword_provider = _wakeword_provider(resolved_settings)
+    app.state.wakeword_service = WakeWordService(
+        wakeword_configuration,
+        app.state.wakeword_provider,
+        session_validator=app.state.authentication_service,
+    )
+    app.state.wakeword_health = LocalWakeWordHealthProvider(
+        wakeword_configuration,
+        app.state.wakeword_provider,
+        required=resolved_settings.wakeword_required,
+        environment=resolved_settings.environment,
+        timeout_seconds=resolved_settings.health_check_timeout_ms / 1000,
+    )
     app.state.stt_provider = None if resolved_settings.stt_provider == "disabled" else FakeSpeechToTextProvider() if resolved_settings.stt_provider == "fake" else FasterWhisperSpeechToTextProvider(resolved_settings.stt_model, resolved_settings.stt_device, resolved_settings.stt_compute_type, language_hint=resolved_settings.stt_language_hint, local_model_directory=resolved_settings.stt_local_model_directory)  # noqa: E501
 
     async def publish_stt_event(job: TranscriptionJob, event_type: str, payload: dict[str, object]) -> None:
@@ -209,6 +261,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             CallableHealthCheck(DependencyName.STT, HealthSeverity.REQUIRED if resolved_settings.stt_required else HealthSeverity.OPTIONAL, app.state.stt_health.dependency),
             CallableHealthCheck(DependencyName.LLM, HealthSeverity.REQUIRED if resolved_settings.llm_required else HealthSeverity.OPTIONAL, app.state.llm_health_dependency),
             CallableHealthCheck(DependencyName.TTS, HealthSeverity.REQUIRED if resolved_settings.tts_required else HealthSeverity.OPTIONAL, app.state.tts_health.dependency),
+            CallableHealthCheck(DependencyName.WAKEWORD, HealthSeverity.REQUIRED if resolved_settings.wakeword_required else HealthSeverity.OPTIONAL, app.state.wakeword_health.dependency),
         ),
         SystemClock(),
         resolved_settings.health_check_timeout_ms / 1000,
@@ -280,6 +333,12 @@ def _text_to_speech_provider(settings: Settings) -> TextToSpeechProvider | None:
         output_format=output_format,
         timeout_seconds=settings.tts_timeout_seconds,
     ))
+
+
+def _wakeword_provider(settings: Settings) -> WakeWordDetector | None:
+    if settings.wakeword_provider == "disabled":
+        return None
+    return FakeWakeWordDetector(environment=settings.environment)
 
 
 app = create_app()

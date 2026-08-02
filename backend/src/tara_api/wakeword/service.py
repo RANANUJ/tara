@@ -157,6 +157,10 @@ class WakeWordService:
         async with record.lock:
             return len(record.frame_sequences)
 
+    async def active_connections(self) -> int:
+        async with self._sessions_lock:
+            return len({identity.connection_id for identity in self._sessions})
+
     async def _clear_matching(self, predicate: Callable[[WakeWordSessionIdentity], bool]) -> None:
         async with self._sessions_lock:
             matches = tuple(identity for identity in self._sessions if predicate(identity))

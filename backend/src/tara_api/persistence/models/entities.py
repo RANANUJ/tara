@@ -15,7 +15,9 @@ from tara_api.persistence.types import (
     ConversationTurnRole,
     ConversationTurnStatus,
     MemoryCategory,
+    MemoryIndexOperation,
     MemorySource,
+    MemoryTaskStatus,
     PermissionGrantState,
     RetentionCategory,
     SchedulerJobStatus,
@@ -146,6 +148,27 @@ class StructuredMemoryModel(TimestampedModel, Base):
     )
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    task_status: Mapped[MemoryTaskStatus | None] = mapped_column(_enum_type(MemoryTaskStatus, "memory_task_status"), nullable=True)
+
+
+class MemoryIndexOutboxModel(Base):
+    """Transactional outbox that makes Chroma a rebuildable derived index."""
+
+    __tablename__ = "memory_index_outbox"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "operation", name="uq_memory_index_outbox_memory_operation"),
+        Index("ix_memory_index_outbox_pending", "processed_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    memory_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operation: Mapped[MemoryIndexOperation] = mapped_column(
+        _enum_type(MemoryIndexOperation, "memory_index_operation"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class PermissionSettingModel(TimestampedModel, Base):

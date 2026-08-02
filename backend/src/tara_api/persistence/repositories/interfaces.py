@@ -17,7 +17,10 @@ from tara_api.persistence.types import (
     ConversationTurnRole,
     ConversationTurnStatus,
     MemoryCategory,
+    MemoryIndexOperation,
+    MemoryIndexOutboxRecord,
     MemorySource,
+    MemoryTaskStatus,
     PendingConfirmationRecord,
     PermissionGrantState,
     PermissionSettingRecord,
@@ -92,6 +95,7 @@ class StructuredMemoryRepository(Protocol):
         source_reference: str | None = None,
         pinned: bool = False,
         expires_at: datetime | None = None,
+        task_status: MemoryTaskStatus | None = None,
     ) -> StructuredMemoryRecord: ...
 
     async def get_by_id(self, memory_id: UUID) -> StructuredMemoryRecord | None: ...
@@ -116,6 +120,7 @@ class StructuredMemoryRepository(Protocol):
         *,
         content: str | None = None,
         pinned: bool | None = None,
+        task_status: MemoryTaskStatus | None = None,
     ) -> StructuredMemoryRecord | None: ...
 
     async def hard_delete(self, memory_id: UUID) -> bool: ...
@@ -128,6 +133,14 @@ class StructuredMemoryRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[StructuredMemoryRecord]: ...
+
+
+class MemoryIndexOutboxRepository(Protocol):
+    async def enqueue(self, memory_id: UUID, operation: MemoryIndexOperation) -> MemoryIndexOutboxRecord: ...
+
+    async def list_pending(self, limit: int = 100) -> list[MemoryIndexOutboxRecord]: ...
+
+    async def mark_processed(self, outbox_id: UUID, processed_at: datetime) -> bool: ...
 
 
 class AgentRequestRepository(Protocol):

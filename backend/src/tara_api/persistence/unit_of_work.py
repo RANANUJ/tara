@@ -11,6 +11,7 @@ from tara_api.persistence.repositories.sqlalchemy import (
     SqlAlchemyConfirmationRepository,
     SqlAlchemyConversationRepository,
     SqlAlchemyConversationTurnRepository,
+    SqlAlchemyMemoryIndexOutboxRepository,
     SqlAlchemyPermissionSettingRepository,
     SqlAlchemySafeServiceConfigurationRepository,
     SqlAlchemySchedulerJobMetadataRepository,
@@ -61,6 +62,10 @@ class SqlAlchemyUnitOfWork:
     @property
     def memories(self) -> SqlAlchemyStructuredMemoryRepository:
         return SqlAlchemyStructuredMemoryRepository(self._require_session())
+
+    @property
+    def memory_index_outbox(self) -> SqlAlchemyMemoryIndexOutboxRepository:
+        return SqlAlchemyMemoryIndexOutboxRepository(self._require_session())
 
     @property
     def permissions(self) -> SqlAlchemyPermissionSettingRepository:

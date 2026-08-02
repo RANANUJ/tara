@@ -20,6 +20,7 @@ class DependencyName(StrEnum):
     STT = "stt"
     LLM = "llm"
     TTS = "tts"
+    WAKEWORD = "wakeword"
 
 
 class HealthSeverity(StrEnum):

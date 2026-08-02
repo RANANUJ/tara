@@ -35,6 +35,9 @@ from tara_api.domain.tts import SpeechSynthesisError, SpeechSynthesisState, Synt
 from tara_api.tts.registry import SynthesisRequestHandle
 from tara_api.tts.service import TextToSpeechService, TextToSpeechServiceFailure
 from tara_api.tts.source import InMemoryApprovedAgentResponseSource
+from tara_api.domain.wakeword import WakeWordError, WakeWordEvent, WakeWordFailure, WakeWordSessionIdentity, WakeWordState
+from tara_api.wakeword.audio import from_m7_audio_frame
+from tara_api.wakeword.service import WakeWordService
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger("tara_api")
@@ -66,6 +69,10 @@ class TtsCancelEvent(BaseModel):
     synthesis_request_id: UUID
 
 
+class WakeWordEnableEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 class TransportConnection:
     def __init__(
         self,
@@ -77,6 +84,7 @@ class TransportConnection:
         tts_source: InMemoryApprovedAgentResponseSource,
         tts_enabled: bool,
         tts_delivery_timeout_seconds: float,
+        wakeword_service: WakeWordService,
     ) -> None:
         self._websocket = websocket
         self.context = context
@@ -96,6 +104,10 @@ class TransportConnection:
         self.tts_delivery_timeout_seconds = tts_delivery_timeout_seconds
         self.tts_tasks: dict[UUID, asyncio.Task[None]] = {}
         self.tts_terminal: set[UUID] = set()
+        self.wakeword_service = wakeword_service
+        self.wakeword_identity: WakeWordSessionIdentity | None = None
+        self.wakeword_enabled = False
+        self.wakeword_tasks: set[asyncio.Task[None]] = set()
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int | None = None) -> None:
         event = ServerEvent(
@@ -176,6 +188,7 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         cast(InMemoryApprovedAgentResponseSource, app.state.tts_response_source),
         app.state.tts_provider is not None,
         float(settings.tts_delivery_timeout_seconds),
+        cast(WakeWordService, app.state.wakeword_service),
     )
     connection.transcription_jobs = cast(InMemoryTranscriptionJobs, app.state.stt_jobs)
     await websocket.accept()
@@ -194,6 +207,7 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         await _send_error_and_close(connection, TransportErrorCode.INTERNAL_ERROR, "Transport error.", 1011)
     finally:
         connection.clear_audio_session(canceled=True)
+        await _disable_wakeword(connection, emit_state=False)
         if connection.transcription_jobs is not None:
             await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
         await _cancel_tts_connection(connection)
@@ -274,6 +288,10 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             await _cancel_agent_request(connection, event.payload)
         elif event.type == "tts.cancel":
             await _cancel_tts_request(connection, event.payload)
+        elif event.type == "wakeword.enable":
+            await _enable_wakeword(connection, event.payload)
+        elif event.type == "wakeword.disable":
+            await _disable_wakeword(connection, emit_state=True)
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
@@ -369,6 +387,7 @@ async def _negotiate_audio(connection: TransportConnection, payload: dict[str, A
 
 
 async def _stop_audio(connection: TransportConnection, canceled: bool) -> None:
+    await _disable_wakeword(connection, emit_state=False)
     cleared = connection.clear_audio_session(canceled)
     payload: dict[str, object] = {"canceled": canceled}
     if cleared is not None:
@@ -412,6 +431,10 @@ async def _handle_audio_frame(connection: TransportConnection, data: bytes) -> N
                     await connection.transcription_jobs.submit(request)
                 except ValueError as error:
                     await connection.send_event("transcript.error", {"audio_session_id": str(connection.audio_session.session_id), "code": str(error)})
+    if connection.wakeword_enabled and connection.wakeword_identity is not None:
+        task = asyncio.create_task(_process_wakeword_frame(connection, frame))
+        connection.wakeword_tasks.add(task)
+        task.add_done_callback(connection.wakeword_tasks.discard)
 
 
 async def _cancel_transcript(connection: TransportConnection, payload: dict[str, Any]) -> None:
@@ -431,8 +454,103 @@ async def _cancel_connection_jobs(connection: TransportConnection) -> None:
         await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
     await connection.agent_service.cancel_connection(connection.context.connection_id)
     await _cancel_tts_connection(connection)
+    await _disable_wakeword(connection, emit_state=False)
     if connection.agent_tasks:
         await asyncio.gather(*tuple(connection.agent_tasks), return_exceptions=True)
+
+
+async def _enable_wakeword(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    try:
+        WakeWordEnableEvent.model_validate(payload)
+    except ValidationError:
+        await _send_wakeword_error(connection, WakeWordError.INVALID_AUDIO_FRAME)
+        return
+    session = connection.audio_session
+    if session is None or not session.format_negotiated:
+        await _send_wakeword_error(connection, WakeWordError.MICROPHONE_NOT_ACTIVE)
+        return
+    identity = WakeWordSessionIdentity(
+        connection.context.owner_id,
+        connection.context.session_id,
+        connection.context.connection_id,
+        session.session_id,
+    )
+    if connection.wakeword_enabled and connection.wakeword_identity == identity:
+        await _send_wakeword_state(connection, WakeWordState.LISTENING)
+        return
+    await _disable_wakeword(connection, emit_state=False)
+    try:
+        state = await connection.wakeword_service.begin(identity, foreground_active=True)
+    except WakeWordFailure as error:
+        await _send_wakeword_error(connection, error.code)
+        return
+    connection.wakeword_identity = identity if state is not WakeWordState.DISABLED else None
+    connection.wakeword_enabled = state is not WakeWordState.DISABLED
+    await _send_wakeword_state(connection, state)
+
+
+async def _disable_wakeword(connection: TransportConnection, *, emit_state: bool) -> None:
+    identity = connection.wakeword_identity
+    connection.wakeword_enabled = False
+    connection.wakeword_identity = None
+    if identity is not None:
+        await connection.wakeword_service.cancel(identity)
+    for task in tuple(connection.wakeword_tasks):
+        task.cancel()
+    if connection.wakeword_tasks:
+        await asyncio.gather(*tuple(connection.wakeword_tasks), return_exceptions=True)
+    if emit_state and connection.state == ConnectionState.ACTIVE:
+        await _send_wakeword_state(connection, WakeWordState.DISABLED)
+
+
+async def _process_wakeword_frame(connection: TransportConnection, frame: object) -> None:
+    identity = connection.wakeword_identity
+    if identity is None or connection.state != ConnectionState.ACTIVE:
+        return
+    from tara_api.domain.audio import AudioFrame
+
+    if not isinstance(frame, AudioFrame):
+        return
+    try:
+        event = await connection.wakeword_service.ingest(
+            identity,
+            from_m7_audio_frame(identity, frame, datetime.now(UTC)),
+            foreground_active=True,
+            tts_playing=bool(connection.tts_tasks),
+        )
+    except asyncio.CancelledError:
+        return
+    except WakeWordFailure as error:
+        if connection.state == ConnectionState.ACTIVE and connection.wakeword_identity == identity:
+            await _send_wakeword_error(connection, error.code)
+        return
+    if event is not None and connection.state == ConnectionState.ACTIVE and connection.wakeword_identity == identity:
+        await _send_wakeword_detected(connection, event)
+
+
+async def _send_wakeword_state(connection: TransportConnection, state: WakeWordState) -> None:
+    payload: dict[str, object] = {"state": state.value, "foreground_only": True}
+    if connection.wakeword_identity is not None:
+        payload["audio_session_id"] = str(connection.wakeword_identity.audio_session_id)
+    await connection.send_event("wakeword.state", payload)
+
+
+async def _send_wakeword_detected(connection: TransportConnection, event: WakeWordEvent) -> None:
+    await connection.send_event(
+        "wakeword.detected",
+        {
+            "wake_event_id": str(event.event_id),
+            "audio_session_id": str(event.identity.audio_session_id),
+            "confidence": round(event.confidence.value, 2),
+            "detected_at": event.occurred_at.isoformat(),
+            "foreground_only": True,
+        },
+    )
+    await _send_wakeword_state(connection, WakeWordState.COOLDOWN)
+
+
+async def _send_wakeword_error(connection: TransportConnection, code: WakeWordError) -> None:
+    await connection.send_event("wakeword.error", {"code": code.value, "message": "Wake-word detection could not be completed."})
 
 
 async def _submit_agent_request(connection: TransportConnection, payload: dict[str, Any]) -> None:

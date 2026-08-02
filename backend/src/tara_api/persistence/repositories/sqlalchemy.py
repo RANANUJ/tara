@@ -17,6 +17,7 @@ from tara_api.persistence.models import (
     ConfirmationConsumptionModel,
     ConversationModel,
     ConversationTurnModel,
+    MemoryIndexOutboxModel,
     PendingConfirmationModel,
     PermissionSettingModel,
     SafeServiceConfigurationModel,
@@ -36,7 +37,10 @@ from tara_api.persistence.types import (
     ConversationTurnRole,
     ConversationTurnStatus,
     MemoryCategory,
+    MemoryIndexOperation,
+    MemoryIndexOutboxRecord,
     MemorySource,
+    MemoryTaskStatus,
     PendingConfirmationRecord,
     PermissionGrantState,
     PermissionSettingRecord,
@@ -117,7 +121,12 @@ def _memory_record(model: StructuredMemoryModel) -> StructuredMemoryRecord:
         model.expires_at,
         model.created_at,
         model.updated_at,
+        model.task_status,
     )
+
+
+def _memory_index_outbox_record(model: MemoryIndexOutboxModel) -> MemoryIndexOutboxRecord:
+    return MemoryIndexOutboxRecord(model.id, model.memory_id, model.operation, model.created_at, model.processed_at, model.attempts)
 
 
 def _permission_record(model: PermissionSettingModel) -> PermissionSettingRecord:
@@ -325,7 +334,7 @@ class SqlAlchemyConversationTurnRepository:
         return cast(CursorResult[object], result).rowcount > 0
 
 
-class SqlAlchemyStructuredMemoryRepository:
+class _SqlAlchemyStructuredMemoryBase:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -339,6 +348,7 @@ class SqlAlchemyStructuredMemoryRepository:
         source_reference: str | None = None,
         pinned: bool = False,
         expires_at: datetime | None = None,
+        task_status: MemoryTaskStatus | None = None,
     ) -> StructuredMemoryRecord:
         model = StructuredMemoryModel(
             category=category,
@@ -348,6 +358,7 @@ class SqlAlchemyStructuredMemoryRepository:
             retention_category=retention_category,
             pinned=pinned,
             expires_at=ensure_utc(expires_at) if expires_at else None,
+            task_status=task_status,
         )
         self._session.add(model)
         await self._session.flush()
@@ -370,6 +381,7 @@ class SqlAlchemyStructuredMemoryRepository:
         statement = statement.order_by(StructuredMemoryModel.created_at.desc()).offset(offset).limit(limit)
         result = await self._session.scalars(statement)
         return [_memory_record(model) for model in result]
+
 
     async def list_for_context(
         self,
@@ -397,12 +409,20 @@ class SqlAlchemyStructuredMemoryRepository:
         result = await self._session.scalars(statement)
         return [_memory_record(model) for model in result]
 
+
+class SqlAlchemyStructuredMemoryRepository(_SqlAlchemyStructuredMemoryBase):
+    """SQLite repository for authoritative structured-memory records."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
     async def update(
         self,
         memory_id: UUID,
         *,
         content: str | None = None,
         pinned: bool | None = None,
+        task_status: MemoryTaskStatus | None = None,
     ) -> StructuredMemoryRecord | None:
         model = await self._session.get(StructuredMemoryModel, memory_id)
         if model is None:
@@ -411,6 +431,8 @@ class SqlAlchemyStructuredMemoryRepository:
             model.content = content
         if pinned is not None:
             model.pinned = pinned
+        if task_status is not None:
+            model.task_status = task_status
         await self._session.flush()
         return _memory_record(model)
 
@@ -444,6 +466,49 @@ class SqlAlchemyStructuredMemoryRepository:
         )
         result = await self._session.scalars(statement)
         return [_memory_record(model) for model in result]
+
+
+class SqlAlchemyMemoryIndexOutboxRepository:
+    """Persist and acknowledge semantic index work inside the caller transaction."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def enqueue(self, memory_id: UUID, operation: MemoryIndexOperation) -> MemoryIndexOutboxRecord:
+        statement = select(MemoryIndexOutboxModel).where(
+            MemoryIndexOutboxModel.memory_id == memory_id,
+            MemoryIndexOutboxModel.operation == operation,
+        )
+        existing = await self._session.scalar(statement)
+        if existing is not None:
+            existing.processed_at = None
+            existing.attempts = 0
+            await self._session.flush()
+            return _memory_index_outbox_record(existing)
+        model = MemoryIndexOutboxModel(memory_id=memory_id, operation=operation)
+        self._session.add(model)
+        await self._session.flush()
+        return _memory_index_outbox_record(model)
+
+    async def list_pending(self, limit: int = 100) -> list[MemoryIndexOutboxRecord]:
+        _validate_pagination(limit, 0)
+        statement = (
+            select(MemoryIndexOutboxModel)
+            .where(MemoryIndexOutboxModel.processed_at.is_(None))
+            .order_by(MemoryIndexOutboxModel.created_at, MemoryIndexOutboxModel.id)
+            .limit(limit)
+        )
+        result = await self._session.scalars(statement)
+        return [_memory_index_outbox_record(model) for model in result]
+
+    async def mark_processed(self, outbox_id: UUID, processed_at: datetime) -> bool:
+        model = await self._session.get(MemoryIndexOutboxModel, outbox_id)
+        if model is None:
+            return False
+        model.processed_at = ensure_utc(processed_at)
+        model.attempts += 1
+        await self._session.flush()
+        return True
 
 
 class SqlAlchemyPermissionSettingRepository:
