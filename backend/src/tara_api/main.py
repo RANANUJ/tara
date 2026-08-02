@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from tara_api.api.errors import install_error_handlers
 from tara_api.api.middleware import install_request_middleware
 from tara_api.api.v1.auth import router as auth_router
+from tara_api.api.v1.confirmations import router as confirmations_router
 from tara_api.api.v1.actions import router as actions_router
 from tara_api.api.v1.health import router as health_router
 from tara_api.api.v1.status import router as status_router
@@ -27,6 +28,8 @@ from tara_api.agent.prompt import DefaultPromptBuilder
 from tara_api.agent.registry import AgentRequestRegistry
 from tara_api.agent.routing import DeterministicIntentRouter
 from tara_api.agent.service import AgentService
+from tara_api.agent.tiered import DeterministicModelProviderSelector
+from tara_api.agent.tools import BoundedAgentToolLoop, RegisteredReadOnlyToolPlanner
 from tara_api.auth.rate_limit import InMemoryLoginRateLimiter
 from tara_api.auth.security import Argon2idPasswordHasher, SecureSessionTokenGenerator
 from tara_api.auth.service import AuthenticationService
@@ -45,6 +48,7 @@ from tara_api.persistence.safety_store import SqlAlchemySafetyStore
 from tara_api.capabilities.filesystem import AllowlistedFilesystemListTool
 from tara_api.capabilities.registry import CapabilityRegistry
 from tara_api.capabilities.service import CapabilityService
+from tara_api.capabilities.consequential import FakeConsequentialActionService
 from tara_api.domain.capabilities import CapabilityState
 from tara_api.domain.models import PermissionScope
 from tara_api.safety.clock import SystemClock as SafetySystemClock
@@ -160,13 +164,29 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.tool_executor,
         app.state.authentication_service,
     )
+    app.state.fake_consequential_service = FakeConsequentialActionService(
+        app.state.confirmation_service,
+        app.state.safety_store,
+        app.state.authentication_service,
+        enabled=resolved_settings.fake_consequential_enabled,
+        uncertain=resolved_settings.fake_consequential_uncertain,
+    )
     app.state.connection_ticket_service = InMemoryConnectionTicketService(
         app.state.authentication_service,
         timedelta(seconds=resolved_settings.websocket_ticket_seconds),
     )
     app.state.connection_registry = InMemoryConnectionRegistry(resolved_settings.websocket_max_connections_per_session)
     app.state.websocket_event_publisher = RegistryEventPublisher(app.state.connection_registry)
-    app.state.llm_provider = _language_model_provider(resolved_settings)
+    app.state.llm_provider = _language_model_provider(resolved_settings, resolved_settings.ollama_fast_model or resolved_settings.ollama_model)
+    app.state.llm_reasoning_provider = _language_model_provider(
+        resolved_settings,
+        resolved_settings.ollama_reasoning_model or resolved_settings.ollama_model or resolved_settings.ollama_fast_model,
+    )
+    app.state.llm_selector = (
+        DeterministicModelProviderSelector(app.state.llm_provider, app.state.llm_reasoning_provider)
+        if app.state.llm_provider is not None and app.state.llm_reasoning_provider is not None
+        else None
+    )
     app.state.llm_health = LocalLanguageModelHealthProvider(
         app.state.llm_provider,
         required=resolved_settings.llm_required,
@@ -222,6 +242,12 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         context_token_budget=resolved_settings.llm_context_token_budget,
         output_token_budget=resolved_settings.llm_output_token_budget,
         timeout_seconds=resolved_settings.agent_request_timeout_seconds,
+        model_selector=app.state.llm_selector,
+        tool_loop=BoundedAgentToolLoop(
+            RegisteredReadOnlyToolPlanner(app.state.capability_registry),
+            app.state.tool_executor,
+            maximum_iterations=resolved_settings.agent_max_tool_iterations,
+        ),
     )
     app.state.tts_provider = _text_to_speech_provider(resolved_settings)
     app.state.tts_response_source = InMemoryApprovedAgentResponseSource(
@@ -320,23 +346,24 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(actions_router, prefix="/api/v1")
+    app.include_router(confirmations_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(websocket_router, prefix="/api/v1")
     return app
 
 
-def _language_model_provider(settings: Settings) -> LanguageModelProvider | None:
+def _language_model_provider(settings: Settings, model_identifier: str) -> LanguageModelProvider | None:
     if settings.llm_provider == "disabled":
         return None
     if settings.llm_provider == "fake":
         return FakeLanguageModelProvider(
-            model_identifier="fake-local",
+            model_identifier="fake-local" if not model_identifier else f"fake-{model_identifier}",
             timeout_seconds=settings.llm_timeout_seconds,
             environment=settings.environment,
         )
     return OllamaLanguageModelProvider(
         settings.ollama_base_url,
-        settings.ollama_model,
+        model_identifier,
         timeout_seconds=settings.llm_timeout_seconds,
         context_token_budget=settings.llm_context_token_budget,
         output_token_budget=settings.llm_output_token_budget,

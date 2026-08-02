@@ -99,10 +99,14 @@ class Settings(BaseSettings):
     memory_scheduler_enabled: bool = True
     tools_filesystem_read_enabled: bool = False
     tools_filesystem_read_roots: tuple[str, ...] = ()
+    fake_consequential_enabled: bool = False
+    fake_consequential_uncertain: bool = False
     llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
     llm_required: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = ""
+    ollama_fast_model: str = ""
+    ollama_reasoning_model: str = ""
     llm_timeout_seconds: int = Field(default=30, ge=1, le=300)
     llm_context_token_budget: int = Field(default=4096, ge=128, le=32768)
     llm_output_token_budget: int = Field(default=512, ge=1, le=8192)
@@ -117,6 +121,7 @@ class Settings(BaseSettings):
     agent_context_estimated_token_limit: int = Field(default=1024, ge=1, le=4096)
     agent_context_allowed_sensitivities: tuple[Literal["normal", "private", "sensitive", "restricted"], ...] = ("normal",)
     agent_request_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    agent_max_tool_iterations: int = Field(default=2, ge=1, le=4)
     agent_max_queued_requests: int = Field(default=8, ge=1, le=64)
     agent_max_concurrent_requests: int = Field(default=1, ge=1, le=8)
     agent_max_requests_per_connection: int = Field(default=2, ge=1, le=16)
@@ -161,6 +166,8 @@ class Settings(BaseSettings):
             raise ValueError("ChromaDB requires an explicit local directory")
         if self.tools_filesystem_read_enabled and not self.tools_filesystem_read_roots:
             raise ValueError("filesystem read requires at least one allowlisted root")
+        if self.environment == "production" and self.fake_consequential_enabled:
+            raise ValueError("production cannot enable the fake consequential action")
         WakeWordConfiguration(
             provider=self.wakeword_provider,
             phrase=self.wakeword_phrase,
@@ -182,7 +189,7 @@ class Settings(BaseSettings):
         parsed_ollama_url = urlsplit(self.ollama_base_url)
         if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.hostname or parsed_ollama_url.username or parsed_ollama_url.password:
             raise ValueError("invalid Ollama base URL")
-        if self.llm_provider == "ollama" and not self.ollama_model:
+        if self.llm_provider == "ollama" and not (self.ollama_model or self.ollama_fast_model or self.ollama_reasoning_model):
             raise ValueError("Ollama provider requires a model identifier")
         if self.llm_streaming:
             raise ValueError("streaming language-model output is not implemented")

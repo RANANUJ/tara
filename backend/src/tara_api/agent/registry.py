@@ -14,7 +14,8 @@ _TERMINAL = frozenset({AgentState.COMPLETED, AgentState.CANCELED, AgentState.TIM
 _ALLOWED = {
     AgentState.QUEUED: {AgentState.ROUTING, AgentState.CANCELED, AgentState.FAILED},
     AgentState.ROUTING: {AgentState.RETRIEVING_CONTEXT, AgentState.COMPLETED, AgentState.CANCELED, AgentState.FAILED},
-    AgentState.RETRIEVING_CONTEXT: {AgentState.GENERATING, AgentState.CANCELED, AgentState.FAILED},
+    AgentState.RETRIEVING_CONTEXT: {AgentState.EXECUTING_TOOLS, AgentState.GENERATING, AgentState.CANCELED, AgentState.FAILED},
+    AgentState.EXECUTING_TOOLS: {AgentState.GENERATING, AgentState.COMPLETED, AgentState.CANCELED, AgentState.TIMED_OUT, AgentState.FAILED},
     AgentState.GENERATING: {AgentState.COMPLETED, AgentState.CANCELED, AgentState.TIMED_OUT, AgentState.FAILED},
     AgentState.WAITING_FOR_CONFIRMATION: {AgentState.CANCELED, AgentState.FAILED},
 }
@@ -161,7 +162,7 @@ class AgentRequestRegistry:
     async def counts(self) -> tuple[int, int, int]:
         async with self._lock:
             queued = sum(job.state == AgentState.QUEUED for job in self._jobs.values())
-            active = sum(job.state in {AgentState.ROUTING, AgentState.RETRIEVING_CONTEXT, AgentState.GENERATING} for job in self._jobs.values())
+            active = sum(job.state in {AgentState.ROUTING, AgentState.RETRIEVING_CONTEXT, AgentState.EXECUTING_TOOLS, AgentState.GENERATING} for job in self._jobs.values())
             terminal = sum(job.state in _TERMINAL for job in self._jobs.values())
             return queued, active, terminal
 

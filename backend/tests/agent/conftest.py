@@ -77,6 +77,8 @@ def memory_store() -> MemoryAgentStore:
 
 
 def service(active_sessions: ActiveSessions, memory_store: MemoryAgentStore, provider, **limits):  # type: ignore[no-untyped-def]
+    model_selector = limits.pop("model_selector", None)
+    tool_loop = limits.pop("tool_loop", None)
     return AgentService(
         registry=registry(**limits),
         persistence=memory_store,
@@ -88,6 +90,8 @@ def service(active_sessions: ActiveSessions, memory_store: MemoryAgentStore, pro
         context_token_budget=1024,
         output_token_budget=64,
         timeout_seconds=1,
+        model_selector=model_selector,
+        tool_loop=tool_loop,
     )
 
 

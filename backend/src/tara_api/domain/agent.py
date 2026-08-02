@@ -6,6 +6,8 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from tara_api.domain.models import ToolRequest, ToolResultStatus
+
 MAX_AGENT_INPUT_CHARS = 12_000
 MAX_MODEL_OUTPUT_CHARS = 8_000
 
@@ -14,6 +16,7 @@ class AgentState(StrEnum):
     QUEUED = "queued"
     ROUTING = "routing"
     RETRIEVING_CONTEXT = "retrieving_context"
+    EXECUTING_TOOLS = "executing_tools"
     GENERATING = "generating"
     WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
     COMPLETED = "completed"
@@ -130,6 +133,21 @@ class ProviderHealthState(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class ModelTier(StrEnum):
+    """Server-selected local-model tier; clients and models cannot select it."""
+
+    FAST = "fast"
+    REASONING = "reasoning"
+
+
+class ModelTierReasonCode(StrEnum):
+    FAST_CONVERSATION = "fast_conversation"
+    FAST_FACTUAL = "fast_factual"
+    FAST_READ_ONLY = "fast_read_only"
+    REASONING_MEMORY = "reasoning_memory"
+    REASONING_COMPLEX_QUESTION = "reasoning_complex_question"
+
+
 def _require_utc(value: datetime, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
         raise ValueError(f"{field_name} must be UTC")
@@ -209,6 +227,29 @@ class IntentRoute:
             raise ValueError("consequential risk must match the intent category")
         if self.clarification is not None and not self.clarification.strip():
             raise ValueError("clarification cannot be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSelection:
+    """Observable deterministic provider choice made after intent routing."""
+
+    tier: ModelTier
+    reason_code: ModelTierReasonCode
+    provider: "LanguageModelProvider"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolObservation:
+    """Bounded, untrusted result retained only for the current agent turn."""
+
+    tool_name: str
+    status: ToolResultStatus
+    safe_summary: str
+    data: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.tool_name or not self.safe_summary or len(self.safe_summary) > 1_024:
+            raise ValueError("invalid tool observation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,10 +422,14 @@ class AgentResponse:
     created_at: datetime
     error: AgentError | None = None
     route: IntentRoute | None = None
+    model_tier: ModelTier | None = None
+    model_tier_reason_code: ModelTierReasonCode | None = None
 
     def __post_init__(self) -> None:
         if not self.text or len(self.text) > MAX_MODEL_OUTPUT_CHARS:
             raise ValueError("invalid agent response")
+        if (self.model_tier is None) != (self.model_tier_reason_code is None):
+            raise ValueError("model tier metadata must be complete")
         _require_utc(self.created_at, "created_at")
 
 
@@ -473,6 +518,24 @@ class ModelClock(Protocol):
 
 class IntentRouter(Protocol):
     def classify(self, text: str) -> IntentRoute: ...
+
+
+class ModelProviderSelector(Protocol):
+    def select(self, route: IntentRoute, text: str) -> ModelSelection: ...
+
+
+class ToolCallPlanner(Protocol):
+    def next_request(
+        self,
+        user_text: str,
+        route: IntentRoute,
+        observations: tuple[ToolObservation, ...],
+        iteration: int,
+    ) -> ToolRequest | None: ...
+
+
+class AgentToolLoop(Protocol):
+    async def execute(self, user_text: str, route: IntentRoute) -> tuple[ToolObservation, ...]: ...
 
 
 class StructuredContextProvider(Protocol):

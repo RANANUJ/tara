@@ -1,5 +1,24 @@
 # Tara Implementation Status
 
+## M15 Complete - Two-Tier Routing and Multi-Step Agent
+
+- Completed scope: added deterministic, server-owned fast/reasoning local-model selection with stable rationale codes. Safe response metadata exposes only the chosen tier and rationale; persistence retains the same non-secret metadata with the assistant turn.
+- Bounded tool loop: the agent can create only server-planned registered read-only requests and executes them exclusively through the existing central safety executor. The loop is limited by `TARA_AGENT_MAX_TOOL_ITERATIONS` (default `2`, maximum `4`), stops after a non-success result, and remains within the request cancellation and timeout boundary.
+- Safety: tool results are length-bounded, rendered as `UNTRUSTED_TOOL_RESULT` prompt data, and never become instruction, identity, permission, policy, or confirmation input. No client or model-supplied tool call protocol, provider fallback, real external action, semantic retrieval change, or M16 behavior was added.
+- Files changed: `backend/src/tara_api/domain/agent.py`, `backend/src/tara_api/agent/service.py`, `backend/src/tara_api/agent/tiered.py`, `backend/src/tara_api/agent/tools.py`, `backend/src/tara_api/agent/registry.py`, `backend/src/tara_api/persistence/agent_store.py`, `backend/src/tara_api/api/v1/websocket.py`, `backend/src/tara_api/main.py`, settings/environment configuration, M15 agent tests, and the listed contract/security/test documents.
+- Commands and results: `python -m pytest backend/tests/agent/test_tiered_routing.py backend/tests/agent/test_tool_loop.py backend/tests/agent/test_m15_agent_loop.py backend/tests/tts/test_tts_websocket.py -q` passed (8); `python -m ruff check backend` passed; `python -m mypy backend/src` passed (105 source files); `python -m pytest backend/tests -q` passed (237); and `pnpm validate` passed frontend lint/typecheck/tests (18)/production build plus backend Ruff/mypy/tests (237). The sole warning is the existing upstream `StarletteDeprecationWarning` from `TestClient`. Standard validation used only fake providers and local test doubles; no model download, network access, or external action occurred.
+- Unresolved blockers: none for M15 automated acceptance. Manual local-Ollama dual-model performance and cancellation checks remain opt-in deployment verification.
+- Exact recommended next milestone: M16 - Proactive Reminders and Briefings. Do not begin M16 as part of M15.
+
+## M14 Complete - Confirmation Gate and Consequential Tool Harness
+
+- Completed scope: added an authenticated, non-production fake consequential-action harness. It creates owner/session-bound confirmation challenges, accepts only explicit affirmative responses through the existing deterministic confirmation service, consumes authorization once, and records only safe synthetic audit metadata.
+- Safety: the fake action is disabled by default, rejected in production, performs no external side effect, and cannot be completed by ambiguous responses, replay, cross-session use, expiry, or altered parameters. Configurable uncertain mode reports `uncertain` and never claims success or retries automatically.
+- API: authenticated `POST /api/v1/confirmations/fake-consequential` proposes a synthetic action; `POST /api/v1/confirmations/{confirmation_id}/respond` resolves the confirmation and reports its safe lifecycle state.
+- Configuration: `TARA_FAKE_CONSEQUENTIAL_ENABLED=false` and `TARA_FAKE_CONSEQUENTIAL_UNCERTAIN=false` remain the secure defaults.
+- Validation: focused capability/confirmation tests pass (5); mypy passes (103 source files). No external provider, network access, download, or M15 behavior was added.
+- Exact recommended next milestone: M15 - Two-Tier Routing and Multi-Step Agent. No M15 work was started.
+
 ## M13 Complete - Capability Registry and Read-Only Tools
 
 - Completed scope: added a typed server-side capability catalog, authenticated Actions API and responsive Actions screen, and one constrained `filesystem.list` read-only local tool. The tool is disabled by default and can only list names inside explicitly configured allowlisted roots.

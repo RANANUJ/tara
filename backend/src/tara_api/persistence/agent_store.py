@@ -90,7 +90,7 @@ class SqlAlchemyAgentPersistenceStore:
                 ConversationTurnStatus.COMPLETED,
                 response.text,
                 agent_request_id=request.request_id,
-                safe_metadata=self._assistant_metadata(provider_name, model_identifier, usage_data, duration_ms),
+                safe_metadata=self._assistant_metadata(provider_name, model_identifier, usage_data, duration_ms, response),
             )
             await unit_of_work.agent_requests.update_terminal(
                 request.request_id,
@@ -122,6 +122,7 @@ class SqlAlchemyAgentPersistenceStore:
         model_identifier: str | None,
         usage: dict[str, int] | None,
         duration_ms: int | None,
+        response: AgentResponse,
     ) -> dict[str, object]:
         metadata: dict[str, object] = {}
         if provider_name is not None:
@@ -132,4 +133,7 @@ class SqlAlchemyAgentPersistenceStore:
             metadata["usage"] = usage
         if duration_ms is not None:
             metadata["duration_ms"] = duration_ms
+        if response.model_tier is not None and response.model_tier_reason_code is not None:
+            metadata["model_tier"] = response.model_tier.value
+            metadata["model_tier_reason_code"] = response.model_tier_reason_code.value
         return metadata

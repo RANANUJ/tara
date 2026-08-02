@@ -638,7 +638,11 @@ async def _complete_agent_request(
     if connection.state != ConnectionState.ACTIVE:
         return
     if response.state == AgentState.COMPLETED:
-        await connection.send_event("agent.response", {"request_id": str(response.request_id), "text": response.text})
+        payload: dict[str, object] = {"request_id": str(response.request_id), "text": response.text}
+        if response.model_tier is not None and response.model_tier_reason_code is not None:
+            payload["model_tier"] = response.model_tier.value
+            payload["model_tier_reason_code"] = response.model_tier_reason_code.value
+        await connection.send_event("agent.response", payload)
         if response.error is None:
             await _begin_tts_handoff(connection, handle.request, response)
     elif response.state == AgentState.CANCELED:

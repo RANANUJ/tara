@@ -60,6 +60,10 @@ Model output is untrusted advice. Tool names, arguments, memory proposals, and c
 
 Tools are privileged adapters. Each declares one capability, risk class, argument schema, timeout, idempotency behavior, and safe audit summary. Tools cannot call other tools directly or widen their own allowed resource scope.
 
+### 4.4.1 Bounded Agent Tool Loop
+
+Two-tier model selection is server-owned and records only stable tier rationale codes. The model and all tool output remain untrusted. Only a registered, server-built read-only request may enter the M15 loop; every execution still passes through the central permission, policy, confirmation, validation, and audit path. Tool output is bounded and delimited as untrusted data, never interpreted as policy, identity, permission, or confirmation input. The loop has a configured maximum iteration count and cancellation terminates the active request without creating a replacement action.
+
 ### 4.5 Storage Boundary
 
 SQLite is authoritative. ChromaDB is a derived index that may contain sensitive semantic representations but never determines deletion or authorization state. Exports and diagnostics are separate temporary artifacts with expiration.

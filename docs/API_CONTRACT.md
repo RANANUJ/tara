@@ -342,12 +342,12 @@ M9D adds final-only local text-agent events to the existing authenticated v1 Web
 | Client | `agent.request` | `text`, `idempotency_key`, optional `conversation_id` UUID | Direct text only; the server supplies all owner, session, connection, and request identity. |
 | Client | `agent.cancel` | `request_id` UUID | Cancellation succeeds only for the originating authenticated owner/session/connection. |
 | Server | `agent.started` | `request_id`, `conversation_id`, `source` | One accepted request identity. |
-| Server | `agent.state` | `request_id`, `state` | Ordered lifecycle state: queued, routing, retrieving_context, generating, then one terminal state. |
-| Server | `agent.response` | `request_id`, final `text` | Exactly one successful final response; no deltas, tool results, or provider metadata. |
+| Server | `agent.state` | `request_id`, `state` | Ordered lifecycle state: queued, routing, retrieving_context, optional executing_tools, generating, then one terminal state. |
+| Server | `agent.response` | `request_id`, final `text`, optional `model_tier` and `model_tier_reason_code` | Exactly one successful final response. Tier metadata is server-selected, observable routing metadata; raw tool results and provider internals are excluded. |
 | Server | `agent.canceled` | `request_id` | Exactly one cancellation terminal event. |
 | Server | `agent.error` | optional `request_id`, stable `code`, safe message | Rejection or failed/timed-out terminal result; never exposes prompt, model path, URL, stack trace, or provider exception. |
 
-Malformed agent payloads are rejected without accepting work. Duplicate direct-text idempotency keys never create a second provider call. A final `transcript.final` may start one bound agent request using the server-issued transcription ID; partial, canceled, timed-out, and failed transcript events never do. The agent response is published only through the originating connection and is suppressed after connection close or session invalidation.
+Malformed agent payloads are rejected without accepting work. Duplicate direct-text idempotency keys never create a second provider call. A final `transcript.final` may start one bound agent request using the server-issued transcription ID; partial, canceled, timed-out, and failed transcript events never do. M15 tool requests are server-built from registered read-only capability definitions and never arrive as client or model protocol events. Tool observations are bounded untrusted prompt data and cannot alter permissions, policy, confirmation, or identity. The agent response is published only through the originating connection and is suppressed after connection close or session invalidation.
 
 ## 22. M10C TTS WebSocket Contract
 

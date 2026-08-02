@@ -205,6 +205,14 @@ M7 uses a deterministic local VAD test implementation only. Silero, STT, TTS, a 
 | AI-017 | Integration | Tool failure observation | Model receives safe typed failure and does not fabricate success |
 | AI-018 | Integration | Multi-step cancellation | Active/pending steps stop; completed side effects are not misreported |
 
+### M15 Implemented Coverage
+
+| Area | Covered behavior | Automated tests |
+|---|---|---|
+| Two-tier routing | Deterministic fast/reasoning selection and stable rationale codes | `backend/tests/agent/test_tiered_routing.py` |
+| Bounded loop | Ordered server-planned read-only calls and stop-on-confirmation behavior | `backend/tests/agent/test_tool_loop.py` |
+| Tool-result isolation | Tool output is delimited as untrusted prompt data; no tool protocol is exposed | `backend/tests/agent/test_m15_agent_loop.py` |
+
 ## 10. Memory Lifecycle
 
 | ID | Level | Scenario | Pass criterion |

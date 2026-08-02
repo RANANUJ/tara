@@ -89,6 +89,7 @@ class ToolResultStatus(StrEnum):
     INVALID = "invalid"
     UNKNOWN_TOOL = "unknown_tool"
     CONFIRMATION_REQUIRED = "confirmation_required"
+    UNCERTAIN = "uncertain"
 
 
 @dataclass(frozen=True, slots=True)

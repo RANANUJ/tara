@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from tara_api.agent.registry import AgentJob, AgentLifecycleListener, AgentRequestHandle, AgentRequestRegistry
+from tara_api.agent.tools import render_untrusted_tool_observation
 from tara_api.agent.validation import DefaultModelResponseValidator
 from tara_api.domain.agent import (
     AgentError,
@@ -19,15 +20,23 @@ from tara_api.domain.agent import (
     AgentSessionValidator,
     AgentState,
     AgentSubmission,
+    AgentToolLoop,
     ContextRequest,
     IntentCategory,
     IntentRoute,
     IntentRouter,
     LanguageModelProvider,
+    ModelMessage,
     ModelProviderFailure,
+    ModelProviderSelector,
     ModelRequest,
+    ModelRole,
+    ModelSelection,
+    ModelTier,
+    ModelTierReasonCode,
     PromptBuilder,
     StructuredContextProvider,
+    ToolObservation,
 )
 from tara_api.domain.auth import AuthenticatedOwnerContext
 
@@ -56,6 +65,8 @@ class AgentService:
         context_token_budget: int,
         output_token_budget: int,
         timeout_seconds: float,
+        model_selector: ModelProviderSelector | None = None,
+        tool_loop: AgentToolLoop | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if context_token_budget < 1 or output_token_budget < 1 or timeout_seconds <= 0:
@@ -67,6 +78,8 @@ class AgentService:
         self._context_provider = context_provider
         self._prompt_builder = prompt_builder
         self._model_provider = model_provider
+        self._model_selector = model_selector
+        self._tool_loop = tool_loop
         self._context_token_budget = context_token_budget
         self._output_token_budget = output_token_budget
         self._timeout_seconds = timeout_seconds
@@ -180,22 +193,36 @@ class AgentService:
                     return await self._deterministic(request, "That capability is not available.", route, AgentError.UNSUPPORTED_INTENT)
                 if route.category == IntentCategory.CONSEQUENTIAL_ACTION_REQUEST:
                     return await self._deterministic(request, "Action execution is not enabled yet.", route, AgentError.CONSEQUENTIAL_ACTION_NOT_ENABLED)
-                if self._model_provider is None:
+                selection = self._select_provider(route, request.text)
+                if selection is None:
                     return await self._terminal(request, AgentState.FAILED, AgentError.PROVIDER_NOT_CONFIGURED, route=route)
                 await self._registry.transition(request.request_id, AgentState.RETRIEVING_CONTEXT)
                 context = await self._context_provider(request.owner_id).get_context(ContextRequest(request.owner_id, request.conversation_id))
                 prompt = self._prompt_builder.build(request.text, context, model_context_token_budget=self._context_token_budget)
+                messages = prompt.messages
+                if self._tool_loop is not None and route.category is IntentCategory.SAFE_READ_ONLY_REQUEST:
+                    await self._registry.transition(request.request_id, AgentState.EXECUTING_TOOLS)
+                    observations = await self._tool_loop.execute(request.text, route)
+                    messages = self._with_tool_observations(messages, observations)
                 await self._registry.transition(request.request_id, AgentState.GENERATING)
                 model_response = self._response_validator.validate(
-                    await self._model_provider.generate(
-                        ModelRequest(request.request_id, prompt.messages, self._context_token_budget, self._output_token_budget, self._utc_now())
+                    await selection.provider.generate(
+                        ModelRequest(request.request_id, messages, self._context_token_budget, self._output_token_budget, self._utc_now())
                     )
                 )
-                response = AgentResponse(request.request_id, model_response.text, AgentState.COMPLETED, self._utc_now(), route=route)
+                response = AgentResponse(
+                    request.request_id,
+                    model_response.text,
+                    AgentState.COMPLETED,
+                    self._utc_now(),
+                    route=route,
+                    model_tier=selection.tier,
+                    model_tier_reason_code=selection.reason_code,
+                )
                 await self._persistence.record_completed(
                     request,
                     response,
-                    provider_name=self._model_provider.name,
+                    provider_name=selection.provider.name,
                     model_identifier=model_response.model_identifier,
                     usage=model_response.usage,
                     duration_ms=model_response.duration_ms,
@@ -212,6 +239,33 @@ class AgentService:
             return await self._terminal(request, AgentState.FAILED, self._error_from_value(error))
         except Exception:
             return await self._terminal(request, AgentState.FAILED, AgentError.INTERNAL_AGENT_ERROR)
+
+    def _select_provider(self, route: IntentRoute, text: str) -> ModelSelection | None:
+        if self._model_selector is not None:
+            return self._model_selector.select(route, text)
+        if self._model_provider is None:
+            return None
+        return ModelSelection(ModelTier.FAST, ModelTierReasonCode.FAST_CONVERSATION, self._model_provider)
+
+    def _with_tool_observations(
+        self,
+        messages: tuple[ModelMessage, ...],
+        observations: Iterable[ToolObservation],
+    ) -> tuple[ModelMessage, ...]:
+        if not observations:
+            return messages
+        limit = self._context_token_budget * 4
+        stable = [message for message in messages[:-1] if "[UNTRUSTED_CONTEXT" not in message.text]
+        user_message = messages[-1]
+        rendered = [render_untrusted_tool_observation(observation) for observation in observations]
+        selected: list[str] = []
+        used = sum(len(message.text) for message in stable) + len(user_message.text)
+        for item in rendered:
+            if used + len(item) > limit:
+                break
+            selected.append(item)
+            used += len(item)
+        return tuple([*stable, *(ModelMessage(ModelRole.USER, item) for item in selected), user_message])
 
     async def _deterministic(self, request: AgentRequest, text: str, route: IntentRoute, error: AgentError) -> AgentResponse:
         response = AgentResponse(request.request_id, text, AgentState.COMPLETED, self._utc_now(), error=error, route=route)
