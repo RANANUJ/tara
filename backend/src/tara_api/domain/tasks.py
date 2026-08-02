@@ -13,6 +13,7 @@ class TaskKind(StrEnum):
 
 class TaskState(StrEnum):
     DRAFT = "draft"
+    PENDING_CONFIRMATION = "pending_confirmation"
     ACTIVE = "active"
     PAUSED = "paused"
     CANCELED = "canceled"

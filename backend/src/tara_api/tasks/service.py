@@ -52,6 +52,17 @@ class ScheduledTaskService:
             await session.flush()
             return self._record(model)
 
+    async def mark_pending_confirmation(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
+        """M14 approval is required before a consequential task may be scheduled."""
+        async with self._database.unit_of_work() as unit:
+            row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
+            if row is None or row.state in {TaskState.CANCELED.value, TaskState.COMPLETED.value, TaskState.FAILED.value}:
+                return False
+            row.state = TaskState.PENDING_CONFIRMATION.value
+            row.enabled = False
+            row.next_run_at = None
+            return True
+
     async def list(self, context: AuthenticatedOwnerContext) -> list[ScheduledTask]:
         async with self._database.unit_of_work() as unit:
             rows = await unit.scheduled_tasks.list_for_owner(context.owner.id)
