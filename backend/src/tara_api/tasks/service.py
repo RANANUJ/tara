@@ -24,6 +24,13 @@ class ScheduledTask:
     schedule: ScheduleDefinition
     state: TaskState
     enabled: bool
+    capability_id: str | None = None
+    target_summary: str | None = None
+    parameters_hash: str | None = None
+    risk_level: str | None = None
+    confirmation_id: UUID | None = None
+    confirmation_status: str | None = None
+    confirmation_binding_hash: str | None = None
 
 
 class ScheduledTaskService:
@@ -142,4 +149,8 @@ class ScheduledTaskService:
     @staticmethod
     def _record(row: ScheduledTaskModel) -> ScheduledTask:
         schedule = ScheduleDefinition(row.timezone, datetime.fromisoformat(str(row.schedule["run_at"])), row.schedule.get("interval_minutes"), row.schedule.get("occurrence_limit"))
-        return ScheduledTask(row.id, row.title, TaskKind(row.task_kind), schedule, TaskState(row.state), row.enabled)
+        return ScheduledTask(
+            row.id, row.title, TaskKind(row.task_kind), schedule, TaskState(row.state), row.enabled,
+            row.capability_id, row.target_summary, row.parameters_hash, row.risk_level,
+            row.confirmation_id, row.confirmation_status, row.confirmation_binding_hash,
+        )
