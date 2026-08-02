@@ -2,9 +2,9 @@
 
 ## M16 In Progress - Proactive Reminders and Briefings
 
-- Completed scope: introduced framework-neutral one-time/bounded recurring schedule validation and the initial owner-scoped `scheduled_tasks` persistence schema.
+- Completed scope: introduced framework-neutral one-time/bounded recurring schedule validation, the initial owner-scoped `scheduled_tasks` persistence schema, and an initial owner-scoped creation/list/pause service with SHA-256 idempotency identity.
 - Migration: `20260803_0007_scheduled_tasks` follows `20260802_0006` and adds UTC task lifecycle, safe session provenance, idempotency, and due-task indexes.
-- Remaining M16 work: repositories and CRUD, confirmation binding, bounded scheduler runtime, transport/frontend/status integration, security tests, and full acceptance validation. M16 is not complete and no M17 work has started.
+- Remaining M16 work: formal Unit of Work repository interface, remaining CRUD operations, confirmation binding, bounded scheduler runtime, transport/frontend/status integration, security tests, and full acceptance validation. M16 is not complete and no M17 work has started.
 
 ## M15 Complete - Two-Tier Routing and Multi-Step Agent
 
