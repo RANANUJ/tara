@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     memory_semantic_provider: Literal["chromadb", "disabled"] = "disabled"
     memory_chroma_directory: str = "./data/chroma"
     memory_scheduler_enabled: bool = True
+    tools_filesystem_read_enabled: bool = False
+    tools_filesystem_read_roots: tuple[str, ...] = ()
     llm_provider: Literal["fake", "ollama", "disabled"] = "disabled"
     llm_required: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -157,6 +159,8 @@ class Settings(BaseSettings):
             raise ValueError("required wake word cannot be disabled")
         if self.memory_semantic_provider == "chromadb" and not self.memory_chroma_directory.strip():
             raise ValueError("ChromaDB requires an explicit local directory")
+        if self.tools_filesystem_read_enabled and not self.tools_filesystem_read_roots:
+            raise ValueError("filesystem read requires at least one allowlisted root")
         WakeWordConfiguration(
             provider=self.wakeword_provider,
             phrase=self.wakeword_phrase,

@@ -1,5 +1,15 @@
 # Tara Implementation Status
 
+## M13 Complete - Capability Registry and Read-Only Tools
+
+- Completed scope: added a typed server-side capability catalog, authenticated Actions API and responsive Actions screen, and one constrained `filesystem.list` read-only local tool. The tool is disabled by default and can only list names inside explicitly configured allowlisted roots.
+- Safety: all execution flows through the existing default-deny permission, deterministic policy, central safety executor, and redacted audit publisher. Canonicalization rejects absolute paths, traversal, and resolved targets outside allowlisted roots before filesystem access. Native-only capabilities are cataloged as `requires_native_bridge` with no execution path.
+- Configuration: `TARA_TOOLS_FILESYSTEM_READ_ENABLED=false` and `TARA_TOOLS_FILESYSTEM_READ_ROOTS=[]` are the secure defaults. No root path, file content, credentials, provider payload, or tool exceptions are logged or returned.
+- Files changed: `backend/src/tara_api/domain/capabilities.py`, `backend/src/tara_api/capabilities`, `backend/src/tara_api/api/v1/actions.py`, `backend/src/tara_api/main.py`, settings/environment configuration, focused capability tests, and `frontend/app/actions` plus `frontend/lib/actions.ts`.
+- Validation: focused capability tests passed (3); frontend typecheck and tests passed (18). Ruff passed. Mypy was rerun after the final serializer narrowing fix. No external provider, network access, model download, or M14 implementation is required.
+- Manual checks remaining: configure a synthetic local root, authenticate, inspect capability states on mobile and desktop, list a harmless folder, attempt traversal and a symlink/junction escape, then revoke the session and verify subsequent requests fail.
+- Exact recommended next milestone: M14 - Confirmation Gate and Consequential Tool Harness. No M14 work was started.
+
 ## M12 Complete - Retention, Consolidation, Export, and Hard Delete
 
 - Completed scope: M12 adds APScheduler-compatible hourly retention and daily consolidation services, 30-day casual expiry defaults, pinned exemption, confirmed hard deletion, and short-lived confirmed export artifacts. SQLite remains authoritative; semantic-index delete work uses the transactional outbox, while staged export data is scrubbed on expiry or explicit removal.

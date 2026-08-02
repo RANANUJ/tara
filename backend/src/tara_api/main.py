@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from tara_api.api.errors import install_error_handlers
 from tara_api.api.middleware import install_request_middleware
 from tara_api.api.v1.auth import router as auth_router
+from tara_api.api.v1.actions import router as actions_router
 from tara_api.api.v1.health import router as health_router
 from tara_api.api.v1.status import router as status_router
 from tara_api.api.v1.websocket import router as websocket_router
@@ -40,6 +41,17 @@ from tara_api.observability.logging import configure_logging, log_settings_loade
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.agent_store import SqlAlchemyAgentPersistenceStore
 from tara_api.persistence.database import Database
+from tara_api.persistence.safety_store import SqlAlchemySafetyStore
+from tara_api.capabilities.filesystem import AllowlistedFilesystemListTool
+from tara_api.capabilities.registry import CapabilityRegistry
+from tara_api.capabilities.service import CapabilityService
+from tara_api.domain.capabilities import CapabilityState
+from tara_api.domain.models import PermissionScope
+from tara_api.safety.clock import SystemClock as SafetySystemClock
+from tara_api.safety.confirmations import DeterministicConfirmationService
+from tara_api.safety.permissions import DefaultDenyPermissionService
+from tara_api.safety.policy import DeterministicActionPolicyService
+from tara_api.safety.tool_executor import SafetyToolExecutor
 from tara_api.memory.lifecycle import MemoryLifecycleScheduler, MemoryLifecycleService
 from tara_api.memory.exports import MemoryExportService
 from tara_api.memory.semantic import ChromaSemanticMemoryIndex, UnavailableSemanticMemoryIndex
@@ -95,6 +107,16 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     )
     app.state.settings = resolved_settings
     app.state.database = database or Database(resolved_settings.database_url)
+    filesystem_tool: AllowlistedFilesystemListTool | None = None
+    filesystem_state = CapabilityState.DISABLED
+    if resolved_settings.tools_filesystem_read_enabled:
+        try:
+            filesystem_tool = AllowlistedFilesystemListTool(tuple(Path(root) for root in resolved_settings.tools_filesystem_read_roots))
+            filesystem_state = CapabilityState.AVAILABLE
+        except (OSError, ValueError):
+            filesystem_state = CapabilityState.UNAVAILABLE
+    app.state.capability_registry = CapabilityRegistry(filesystem_tool, filesystem_state)
+    app.state.safety_store = SqlAlchemySafetyStore(app.state.database)
     app.state.memory_semantic_index = (
         ChromaSemanticMemoryIndex(Path(resolved_settings.memory_chroma_directory))
         if resolved_settings.memory_semantic_provider == "chromadb"
@@ -118,6 +140,25 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         lambda: datetime.now(UTC),
         timedelta(minutes=resolved_settings.session_absolute_minutes),
         timedelta(minutes=resolved_settings.session_idle_minutes),
+    )
+    app.state.confirmation_service = DeterministicConfirmationService(
+        app.state.safety_store,
+        SafetySystemClock(),
+        context_validator=app.state.authentication_service,
+    )
+    granted_scopes = (PermissionScope("filesystem.read"),) if filesystem_tool is not None else ()
+    app.state.tool_executor = SafetyToolExecutor(
+        app.state.capability_registry,
+        DefaultDenyPermissionService(granted_scopes),
+        DeterministicActionPolicyService(),
+        app.state.confirmation_service,
+        app.state.safety_store,
+        SafetySystemClock(),
+    )
+    app.state.capability_service = CapabilityService(
+        app.state.capability_registry,
+        app.state.tool_executor,
+        app.state.authentication_service,
     )
     app.state.connection_ticket_service = InMemoryConnectionTicketService(
         app.state.authentication_service,
@@ -278,6 +319,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     install_error_handlers(app)
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(actions_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(websocket_router, prefix="/api/v1")
     return app
