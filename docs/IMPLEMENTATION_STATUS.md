@@ -1,5 +1,11 @@
 # Tara Implementation Status
 
+## M16 In Progress - Proactive Reminders and Briefings
+
+- Completed scope: introduced framework-neutral one-time/bounded recurring schedule validation and the initial owner-scoped `scheduled_tasks` persistence schema.
+- Migration: `20260803_0007_scheduled_tasks` follows `20260802_0006` and adds UTC task lifecycle, safe session provenance, idempotency, and due-task indexes.
+- Remaining M16 work: repositories and CRUD, confirmation binding, bounded scheduler runtime, transport/frontend/status integration, security tests, and full acceptance validation. M16 is not complete and no M17 work has started.
+
 ## M15 Complete - Two-Tier Routing and Multi-Step Agent
 
 - Completed scope: added deterministic, server-owned fast/reasoning local-model selection with stable rationale codes. Safe response metadata exposes only the chosen tier and rationale; persistence retains the same non-secret metadata with the assistant turn.

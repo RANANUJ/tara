@@ -288,6 +288,31 @@ class SchedulerJobMetadataModel(TimestampedModel, Base):
     safe_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
+class ScheduledTaskModel(TimestampedModel, Base):
+    """Owner-scoped durable M16 task definition; no secrets or raw provider data."""
+
+    __tablename__ = "scheduled_tasks"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key_hash", name="uq_scheduled_tasks_owner_idempotency"),
+        Index("ix_scheduled_tasks_due", "enabled", "state", "next_run_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), nullable=False)
+    owner_session_id: Mapped[UUID | None] = mapped_column(ForeignKey("owner_sessions.id", ondelete="SET NULL"), nullable=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    task_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    instruction: Mapped[str] = mapped_column(String(1024), nullable=False)
+    schedule: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class SafeServiceConfigurationModel(TimestampedModel, Base):
     """Persist non-secret service configuration metadata only."""
 

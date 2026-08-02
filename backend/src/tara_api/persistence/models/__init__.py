@@ -13,6 +13,7 @@ from tara_api.persistence.models.entities import (
     PendingConfirmationModel,
     PermissionSettingModel,
     SafeServiceConfigurationModel,
+    ScheduledTaskModel,
     SchedulerJobMetadataModel,
     StructuredMemoryModel,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "PendingConfirmationModel",
     "PermissionSettingModel",
     "SafeServiceConfigurationModel",
+    "ScheduledTaskModel",
     "SchedulerJobMetadataModel",
     "StructuredMemoryModel",
 ]
