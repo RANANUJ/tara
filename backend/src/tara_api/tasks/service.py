@@ -67,6 +67,35 @@ class ScheduledTaskService:
             row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
             return self._record(row) if row else None
 
+    async def update(self, context: AuthenticatedOwnerContext, task_id: UUID, values: dict[str, object]) -> ScheduledTask | None:
+        allowed = {"title", "instruction", "schedule"}
+        if not values or set(values) - allowed:
+            raise ValueError("invalid_task_update")
+        async with self._database.unit_of_work() as unit:
+            row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
+            if row is None:
+                return None
+            if row.state in {TaskState.CANCELED.value, TaskState.COMPLETED.value, TaskState.FAILED.value}:
+                raise ValueError("task_not_mutable")
+            if "title" in values:
+                title = values["title"]
+                if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+                    raise ValueError("invalid_task_update")
+                row.title = title.strip()
+            if "instruction" in values:
+                instruction = values["instruction"]
+                if not isinstance(instruction, str) or not 1 <= len(instruction.strip()) <= 1024:
+                    raise ValueError("invalid_task_update")
+                row.instruction = instruction.strip()
+            if "schedule" in values:
+                schedule = values["schedule"]
+                if not isinstance(schedule, ScheduleDefinition):
+                    raise ValueError("invalid_task_update")
+                row.schedule = {"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit}
+                row.timezone = schedule.timezone
+                row.next_run_at = schedule.next_after(datetime.now(UTC)) if row.enabled else None
+            return self._record(row)
+
     async def resume(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         return await self._set_state(context, task_id, TaskState.ACTIVE, True)
 
