@@ -1,6 +1,8 @@
 """Framework-neutral scheduled-task contracts for M16."""
 
 from dataclasses import dataclass
+import json
+from hashlib import sha256
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -55,3 +57,30 @@ class ScheduleDefinition:
         while current <= now.astimezone(UTC):
             current += interval
         return current
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledTaskCreateCommand:
+    title: str
+    instruction: str
+    capability_id: str
+    target: str
+    parameters: dict[str, str | int | bool | None]
+    schedule: ScheduleDefinition
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.title.strip()) <= 160 or not 1 <= len(self.instruction.strip()) <= 1024:
+            raise ValueError("invalid_task_input")
+        if not self.capability_id.replace(".", "").replace("_", "").isalnum() or len(self.capability_id) > 128:
+            raise ValueError("invalid_capability_id")
+        if not self.target.strip() or len(self.target) > 256 or len(self.parameters) > 32 or not self.idempotency_key:
+            raise ValueError("invalid_task_input")
+
+    def binding_hash(self) -> str:
+        payload = {"capability": self.capability_id, "target": self.target.strip(), "parameters": self.parameters, "instruction": self.instruction.strip(), "run_at": self.schedule.run_at.astimezone(UTC).isoformat(), "timezone": self.schedule.timezone, "interval": self.schedule.interval_minutes, "count": self.schedule.occurrence_limit}
+        try:
+            encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError("invalid_task_parameters") from error
+        return sha256(encoded.encode()).hexdigest()
