@@ -2,8 +2,8 @@
 
 from tara_api.persistence.models.base import Base
 from tara_api.persistence.models.entities import (
-    AuditEventModel,
     AgentRequestModel,
+    AuditEventModel,
     ConfirmationConsumptionModel,
     ConversationModel,
     ConversationTurnModel,

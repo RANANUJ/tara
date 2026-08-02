@@ -19,6 +19,17 @@ _ALLOWED = {
     AgentState.WAITING_FOR_CONFIRMATION: {AgentState.CANCELED, AgentState.FAILED},
 }
 
+AgentLifecycleListener = Callable[[AgentRequest, AgentState], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRequestHandle:
+    """Accepted process-local request and its single completion future."""
+
+    request: AgentRequest
+    completion: asyncio.Future[AgentResponse]
+    created: bool
+
 
 @dataclass(slots=True)
 class AgentJob:
@@ -29,6 +40,7 @@ class AgentJob:
     result: asyncio.Future[AgentResponse] | None = None
     execution_task: asyncio.Future[AgentResponse] | None = None
     operation: Callable[[AgentJob], Awaitable[AgentResponse]] | None = None
+    listener: AgentLifecycleListener | None = None
 
 
 class AgentRequestRegistry:
@@ -60,30 +72,44 @@ class AgentRequestRegistry:
         self._workers: list[asyncio.Task[None]] = []
         self._lock = asyncio.Lock()
 
-    async def submit(self, request: AgentRequest, operation: Callable[[AgentJob], Awaitable[AgentResponse]]) -> AgentResponse:
+    async def begin(
+        self,
+        request: AgentRequest,
+        operation: Callable[[AgentJob], Awaitable[AgentResponse]],
+        *,
+        listener: AgentLifecycleListener | None = None,
+    ) -> AgentRequestHandle:
         key = self._key(request)
-        completion: asyncio.Future[AgentResponse]
         async with self._lock:
             self._prune_locked(datetime.now(UTC))
             existing_id = self._idempotency.get(key)
             if existing_id is not None:
                 existing = self._jobs.get(existing_id)
                 if existing is not None and existing.result is not None:
-                    completion = existing.result
+                    if existing.request.connection_id != request.connection_id:
+                        raise ValueError(AgentError.DUPLICATE_REQUEST.value)
+                    return AgentRequestHandle(existing.request, existing.result, False)
                 else:
                     raise ValueError(AgentError.DUPLICATE_REQUEST.value)
-            else:
-                pending = tuple(job for job in self._jobs.values() if job.state not in _TERMINAL)
-                self._check_limits(request, pending)
-                completion = asyncio.get_running_loop().create_future()
-                job = AgentJob(request=request, result=completion, operation=operation)
-                self._jobs[request.request_id] = job
-                self._idempotency[key] = request.request_id
-                self._queue.put_nowait(request.request_id)
-                self._ensure_workers_locked()
-        return await asyncio.shield(completion)
+            pending = tuple(job for job in self._jobs.values() if job.state not in _TERMINAL)
+            self._check_limits(request, pending)
+            completion = asyncio.get_running_loop().create_future()
+            job = AgentJob(request=request, result=completion, operation=operation, listener=listener)
+            self._jobs[request.request_id] = job
+            self._idempotency[key] = request.request_id
+            self._queue.put_nowait(request.request_id)
+            self._ensure_workers_locked()
+            return AgentRequestHandle(request, completion, True)
+
+    async def submit(self, request: AgentRequest, operation: Callable[[AgentJob], Awaitable[AgentResponse]]) -> AgentResponse:
+        return await self.wait(await self.begin(request, operation))
+
+    @staticmethod
+    async def wait(handle: AgentRequestHandle) -> AgentResponse:
+        return await asyncio.shield(handle.completion)
 
     async def transition(self, request_id: UUID, target: AgentState) -> bool:
+        notification: tuple[AgentLifecycleListener, AgentRequest, AgentState] | None = None
         async with self._lock:
             job = self._jobs.get(request_id)
             if job is None or job.state in _TERMINAL:
@@ -92,34 +118,42 @@ class AgentRequestRegistry:
                 raise ValueError(AgentError.INVALID_REQUEST_STATE.value)
             job.state = target
             job.updated_at = datetime.now(UTC)
-            return True
+            if job.listener is not None:
+                notification = job.listener, job.request, target
+        await self._notify(notification)
+        return True
 
     async def cancel(self, request_id: UUID, owner_id: UUID, session_id: UUID, connection_id: UUID | None) -> bool:
+        notification: tuple[AgentLifecycleListener, AgentRequest, AgentState] | None = None
         async with self._lock:
             job = self._jobs.get(request_id)
             if job is None or (job.request.owner_id, job.request.session_id, job.request.connection_id) != (owner_id, session_id, connection_id):
                 return False
             if job.state in _TERMINAL:
                 return job.state == AgentState.CANCELED
-            self._cancel_locked(job, AgentError.REQUEST_CANCELED)
-            return True
+            notification = self._cancel_locked(job, AgentError.REQUEST_CANCELED)
+        await self._notify(notification)
+        return True
 
-    async def cancel_connection(self, connection_id: UUID) -> None:
-        await self._cancel_matching(lambda job: job.request.connection_id == connection_id, AgentError.REQUEST_CANCELED)
+    async def cancel_connection(self, connection_id: UUID) -> tuple[AgentRequest, ...]:
+        return await self._cancel_matching(lambda job: job.request.connection_id == connection_id, AgentError.REQUEST_CANCELED)
 
-    async def cancel_session(self, owner_id: UUID, session_id: UUID, error: AgentError = AgentError.SESSION_INVALIDATED) -> None:
-        await self._cancel_matching(lambda job: (job.request.owner_id, job.request.session_id) == (owner_id, session_id), error)
+    async def cancel_session(self, owner_id: UUID, session_id: UUID, error: AgentError = AgentError.SESSION_INVALIDATED) -> tuple[AgentRequest, ...]:
+        return await self._cancel_matching(lambda job: (job.request.owner_id, job.request.session_id) == (owner_id, session_id), error)
 
     async def cleanup(self) -> None:
         async with self._lock:
             self._prune_locked(datetime.now(UTC))
 
     async def shutdown(self) -> None:
+        notifications: list[tuple[AgentLifecycleListener, AgentRequest, AgentState] | None] = []
         async with self._lock:
             for job in self._jobs.values():
                 if job.state not in _TERMINAL:
-                    self._cancel_locked(job, AgentError.REQUEST_CANCELED)
+                    notifications.append(self._cancel_locked(job, AgentError.REQUEST_CANCELED))
             workers, self._workers = self._workers, []
+        for notification in notifications:
+            await self._notify(notification)
         for worker in workers:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
@@ -156,6 +190,9 @@ class AgentRequestRegistry:
                 try:
                     response = await job.execution_task
                 except asyncio.CancelledError:
+                    current_task = asyncio.current_task()
+                    if current_task is not None and current_task.cancelling():
+                        raise
                     continue
                 except Exception:
                     await self._fail(job, AgentError.INTERNAL_AGENT_ERROR)
@@ -165,38 +202,61 @@ class AgentRequestRegistry:
                 self._queue.task_done()
 
     async def _complete(self, job: AgentJob, response: AgentResponse) -> None:
+        notification: tuple[AgentLifecycleListener, AgentRequest, AgentState] | None = None
         async with self._lock:
             if job.state in _TERMINAL:
                 return
             if response.state not in _TERMINAL:
-                self._cancel_locked(job, AgentError.INTERNAL_AGENT_ERROR)
-                return
-            job.state = response.state
-            job.updated_at = datetime.now(UTC)
-            if job.result is not None and not job.result.done():
-                job.result.set_result(response)
+                notification = self._cancel_locked(job, AgentError.INTERNAL_AGENT_ERROR)
+            else:
+                job.state = response.state
+                job.updated_at = datetime.now(UTC)
+                if job.result is not None and not job.result.done():
+                    job.result.set_result(response)
+                if job.listener is not None:
+                    notification = job.listener, job.request, response.state
+        await self._notify(notification)
 
     async def _fail(self, job: AgentJob, error: AgentError) -> None:
+        notification: tuple[AgentLifecycleListener, AgentRequest, AgentState] | None = None
         async with self._lock:
             if job.state not in _TERMINAL:
-                self._finish_locked(job, AgentState.FAILED, error)
+                notification = self._finish_locked(job, AgentState.FAILED, error)
+        await self._notify(notification)
 
-    async def _cancel_matching(self, predicate: Callable[[AgentJob], bool], error: AgentError) -> None:
+    async def _cancel_matching(self, predicate: Callable[[AgentJob], bool], error: AgentError) -> tuple[AgentRequest, ...]:
+        notifications: list[tuple[AgentLifecycleListener, AgentRequest, AgentState] | None] = []
+        canceled: list[AgentRequest] = []
         async with self._lock:
             for job in self._jobs.values():
                 if predicate(job) and job.state not in _TERMINAL:
-                    self._cancel_locked(job, error)
+                    canceled.append(job.request)
+                    notifications.append(self._cancel_locked(job, error))
+        for notification in notifications:
+            await self._notify(notification)
+        return tuple(canceled)
 
-    def _cancel_locked(self, job: AgentJob, error: AgentError) -> None:
+    def _cancel_locked(self, job: AgentJob, error: AgentError) -> tuple[AgentLifecycleListener, AgentRequest, AgentState] | None:
         if job.execution_task is not None:
             job.execution_task.cancel()
-        self._finish_locked(job, AgentState.CANCELED, error)
+        return self._finish_locked(job, AgentState.CANCELED, error)
 
-    def _finish_locked(self, job: AgentJob, state: AgentState, error: AgentError) -> None:
+    def _finish_locked(self, job: AgentJob, state: AgentState, error: AgentError) -> tuple[AgentLifecycleListener, AgentRequest, AgentState] | None:
         job.state = state
         job.updated_at = datetime.now(UTC)
         if job.result is not None and not job.result.done():
             job.result.set_result(AgentResponse(job.request.request_id, "The request could not be completed.", state, job.updated_at, error))
+        return (job.listener, job.request, state) if job.listener is not None else None
+
+    @staticmethod
+    async def _notify(notification: tuple[AgentLifecycleListener, AgentRequest, AgentState] | None) -> None:
+        if notification is None:
+            return
+        listener, request, state = notification
+        try:
+            await listener(request, state)
+        except Exception:
+            return
 
     def _check_limits(self, request: AgentRequest, pending: tuple[AgentJob, ...]) -> None:
         if sum(job.state == AgentState.QUEUED for job in pending) >= self._maximum_queued:

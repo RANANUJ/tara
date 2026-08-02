@@ -17,5 +17,5 @@ def test_readiness_returns_typed_dependency_status(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "healthy"
     assert body["ready"] is True
-    assert {item["name"] for item in body["dependencies"]} == {"application", "database", "authentication", "schema", "stt"}
+    assert {item["name"] for item in body["dependencies"]} == {"application", "database", "authentication", "schema", "stt", "llm"}
     assert all(item["latency_ms"] >= 0 for item in body["dependencies"])

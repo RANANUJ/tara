@@ -11,13 +11,14 @@ from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from tara_api.api.middleware import CORRELATION_HEADER, select_correlation_id
 from tara_api.api.v1.auth import authenticated_context
 from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings
 from tara_api.domain.audio import AudioFormat
+from tara_api.domain.agent import AgentError, AgentInputSource, AgentRequest, AgentState, AgentSubmission, MAX_AGENT_INPUT_CHARS
 from tara_api.domain.auth import AuthenticatedOwnerContext
 from tara_api.domain.errors import DependencyUnavailableError
 from tara_api.domain.transport import ConnectionContext, ConnectionState
@@ -27,6 +28,8 @@ from tara_api.transport.registry import InMemoryConnectionRegistry
 from tara_api.transport.tickets import InMemoryConnectionTicketService
 from tara_api.domain.stt import TranscriptionRequest
 from tara_api.stt.service import InMemoryTranscriptionJobs
+from tara_api.agent.registry import AgentRequestHandle
+from tara_api.agent.service import AgentService, AgentServiceFailure
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger("tara_api")
@@ -38,8 +41,28 @@ class TicketResponse(BaseModel):
     protocol_version: int = 1
 
 
+class AgentRequestEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: StrictStr = Field(min_length=1, max_length=MAX_AGENT_INPUT_CHARS)
+    idempotency_key: StrictStr = Field(min_length=1, max_length=256)
+    conversation_id: UUID | None = None
+
+
+class AgentCancelEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+
+
 class TransportConnection:
-    def __init__(self, websocket: WebSocket, context: ConnectionContext) -> None:
+    def __init__(
+        self,
+        websocket: WebSocket,
+        context: ConnectionContext,
+        authenticated_context: AuthenticatedOwnerContext,
+        agent_service: AgentService,
+    ) -> None:
         self._websocket = websocket
         self.context = context
         self.state = ConnectionState.AUTHENTICATING
@@ -49,6 +72,9 @@ class TransportConnection:
         self._closed = False
         self.audio_session: AudioSession | None = None
         self.transcription_jobs: InMemoryTranscriptionJobs | None = None
+        self.authenticated_context = authenticated_context
+        self.agent_service = agent_service
+        self.agent_tasks: set[asyncio.Task[None]] = set()
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int | None = None) -> None:
         event = ServerEvent(
@@ -123,6 +149,8 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
     connection = TransportConnection(
         websocket,
         ConnectionContext(uuid4(), context.owner.id, context.session.id, 1, websocket_scope_time(), correlation_id),
+        context,
+        cast(AgentService, app.state.agent_service),
     )
     connection.transcription_jobs = cast(InMemoryTranscriptionJobs, app.state.stt_jobs)
     await websocket.accept()
@@ -214,6 +242,10 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             await _flush_audio(connection)
         elif event.type == "transcript.cancel":
             await _cancel_transcript(connection, event.payload)
+        elif event.type == "agent.request":
+            await _submit_agent_request(connection, event.payload)
+        elif event.type == "agent.cancel":
+            await _cancel_agent_request(connection, event.payload)
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
@@ -367,3 +399,106 @@ async def _cancel_transcript(connection: TransportConnection, payload: dict[str,
 async def _cancel_connection_jobs(connection: TransportConnection) -> None:
     if connection.transcription_jobs is not None:
         await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
+    await connection.agent_service.cancel_connection(connection.context.connection_id)
+    if connection.agent_tasks:
+        await asyncio.gather(*tuple(connection.agent_tasks), return_exceptions=True)
+
+
+async def _submit_agent_request(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    try:
+        event = AgentRequestEvent.model_validate(payload)
+        submission = AgentSubmission(event.text, AgentInputSource.DIRECT_TEXT, event.idempotency_key, event.conversation_id)
+    except (ValidationError, ValueError):
+        await _send_agent_error(connection, None, AgentError.EMPTY_INPUT)
+        return
+    await _begin_agent_request(connection, submission)
+
+
+async def _cancel_agent_request(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    try:
+        event = AgentCancelEvent.model_validate(payload)
+    except ValidationError:
+        await _send_agent_error(connection, None, AgentError.INVALID_CONVERSATION)
+        return
+    if await connection.agent_service.cancel(
+        connection.authenticated_context,
+        event.request_id,
+        connection_id=connection.context.connection_id,
+    ):
+        return
+    await _send_agent_error(connection, str(event.request_id), AgentError.INVALID_REQUEST_STATE)
+
+
+async def _begin_agent_request(connection: TransportConnection, submission: AgentSubmission) -> None:
+    async def publish_state(request_id: UUID, state: AgentState) -> None:
+        if connection.state == ConnectionState.ACTIVE:
+            await connection.send_event("agent.state", {"request_id": str(request_id), "state": state.value})
+
+    async def listener(request: AgentRequest, state: AgentState) -> None:
+        await publish_state(request.request_id, state)
+
+    try:
+        handle = await connection.agent_service.begin(
+            connection.authenticated_context,
+            submission,
+            connection_id=connection.context.connection_id,
+            listener=listener,
+        )
+    except AgentServiceFailure as error:
+        await _send_agent_error(connection, None, error.code)
+        return
+    if not handle.created:
+        await _send_agent_error(connection, str(handle.request.request_id), AgentError.DUPLICATE_REQUEST)
+        return
+    await connection.send_event(
+        "agent.started",
+        {
+            "request_id": str(handle.request.request_id),
+            "conversation_id": str(handle.request.conversation_id),
+            "source": handle.request.source.value,
+        },
+    )
+    await publish_state(handle.request.request_id, AgentState.QUEUED)
+    task = asyncio.create_task(_complete_agent_request(connection, connection.agent_service, handle.request.request_id, handle))
+    connection.agent_tasks.add(task)
+    task.add_done_callback(connection.agent_tasks.discard)
+
+
+async def submit_final_transcript(connection: TransportConnection, text: str, transcript_id: UUID) -> None:
+    """Start a final-transcript request; partial and terminal STT events never call this."""
+
+    await _begin_agent_request(
+        connection,
+        AgentSubmission(text, AgentInputSource.FINAL_TRANSCRIPT, source_transcript_id=transcript_id),
+    )
+
+
+async def _complete_agent_request(
+    connection: TransportConnection,
+    service: AgentService,
+    request_id: UUID,
+    handle: AgentRequestHandle,
+) -> None:
+    try:
+        response = await service.complete(handle)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        if connection.state == ConnectionState.ACTIVE:
+            await _send_agent_error(connection, str(request_id), AgentError.INTERNAL_AGENT_ERROR)
+        return
+    if connection.state != ConnectionState.ACTIVE:
+        return
+    if response.state == AgentState.COMPLETED:
+        await connection.send_event("agent.response", {"request_id": str(response.request_id), "text": response.text})
+    elif response.state == AgentState.CANCELED:
+        await connection.send_event("agent.canceled", {"request_id": str(response.request_id)})
+    else:
+        await _send_agent_error(connection, str(response.request_id), response.error or AgentError.INTERNAL_AGENT_ERROR)
+
+
+async def _send_agent_error(connection: TransportConnection, request_id: str | None, code: AgentError) -> None:
+    payload: dict[str, object] = {"code": code.value, "message": "The request could not be completed."}
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await connection.send_event("agent.error", payload)

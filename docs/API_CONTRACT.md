@@ -327,3 +327,19 @@ The registry rejects work before registration with stable safe codes including `
 Transcript delivery is isolated by authenticated owner, session, and connection. Jobs are canceled when that connection closes or its session becomes invalid. M8 neither persists raw audio nor transcript text.
 
 Authenticated `GET /api/v1/status` includes a safe `stt` object: configured/required flags, provider label, provider state/readiness/model-loaded state, language and partial modes, queued and active job counts, and configured queue/concurrency limits. STT health never loads a model, transcribes audio, downloads a model, or accesses the network. An unavailable optional provider degrades status but leaves readiness successful; an unavailable required provider makes readiness fail.
+
+## 21. M9D Agent WebSocket Contract
+
+M9D adds final-only local text-agent events to the existing authenticated v1 WebSocket envelope. It adds no REST agent endpoint, token streaming, TTS, tool call, confirmation, or action event.
+
+| Direction | Event | Exact payload | Contract |
+|---|---|---|---|
+| Client | `agent.request` | `text`, `idempotency_key`, optional `conversation_id` UUID | Direct text only; the server supplies all owner, session, connection, and request identity. |
+| Client | `agent.cancel` | `request_id` UUID | Cancellation succeeds only for the originating authenticated owner/session/connection. |
+| Server | `agent.started` | `request_id`, `conversation_id`, `source` | One accepted request identity. |
+| Server | `agent.state` | `request_id`, `state` | Ordered lifecycle state: queued, routing, retrieving_context, generating, then one terminal state. |
+| Server | `agent.response` | `request_id`, final `text` | Exactly one successful final response; no deltas, tool results, or provider metadata. |
+| Server | `agent.canceled` | `request_id` | Exactly one cancellation terminal event. |
+| Server | `agent.error` | optional `request_id`, stable `code`, safe message | Rejection or failed/timed-out terminal result; never exposes prompt, model path, URL, stack trace, or provider exception. |
+
+Malformed agent payloads are rejected without accepting work. Duplicate direct-text idempotency keys never create a second provider call. A final `transcript.final` may start one bound agent request using the server-issued transcription ID; partial, canceled, timed-out, and failed transcript events never do. The agent response is published only through the originating connection and is suppressed after connection close or session invalidation.

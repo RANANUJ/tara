@@ -1,6 +1,6 @@
 # Tara API
 
-This Python 3.12 package provides Tara's authenticated transport, foreground audio boundary, and optional M8 local speech-to-text foundation. It does not implement an agent, tools, TTS, semantic memory, or product UI.
+This Python 3.12 package provides Tara's authenticated transport, foreground audio boundary, optional local STT, and M9 final-only local text-agent loop. It does not implement tools, confirmations, TTS, semantic memory, or product UI.
 
 ## M8 local STT (optional)
 
@@ -41,3 +41,9 @@ $env:TARA_LLM_TEMPERATURE = "0.2"
 ```
 
 M9A supports final-only generation. `TARA_LLM_STREAMING` must remain `false`; no agent deltas are exposed. `TARA_LLM_REQUIRED=false` keeps the provider optional for later health integration. The deterministic `fake` provider is for development/test only and production settings reject it. Standard tests use mocked HTTP and do not require Ollama, a model download, network access, or GPU hardware.
+
+## M9D agent transport and readiness
+
+The authenticated v1 WebSocket accepts direct `agent.request` text with an idempotency key and optional conversation UUID, plus owner/session/connection-bound `agent.cancel`. It publishes final-only `agent.started`, `agent.state`, `agent.response`, `agent.canceled`, and sanitized `agent.error` events. There is no REST agent endpoint, token streaming, TTS, tool execution, confirmation, or device action in M9.
+
+Only a successful server-generated `transcript.final` starts an agent request; partial, canceled, timed-out, and failed transcripts never do. `GET /api/v1/health/ready` includes bounded LLM dependency health, while authenticated `GET /api/v1/status` exposes only safe LLM and agent availability/counter fields. Neither endpoint generates text or pulls a model.

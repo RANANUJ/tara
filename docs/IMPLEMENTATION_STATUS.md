@@ -1,5 +1,41 @@
 # Tara Implementation Status
 
+## M9 Final Acceptance - Complete
+
+### Completed Scope
+
+- Completed the local, final-only text-agent loop: deterministic routing, bounded context, one provider call at most, transactionally persisted content-minimized turns, process-local queue limits, idempotency, cancellation, and no tools, confirmations, TTS, semantic retrieval, or device actions.
+- Added authenticated v1 WebSocket `agent.request` and `agent.cancel` handling with strict direct-text payloads and server-owned identity. Accepted requests emit ordered `agent.started` and `agent.state` events followed by exactly one terminal `agent.response`, `agent.canceled`, or sanitized `agent.error`; responses remain bound to the originating connection.
+- Integrated final-STT handoff: only a server-issued successful `transcript.final` can submit one agent request. Partial, canceled, timed-out, and failed STT outcomes create none. Disconnect, session invalidation, and shutdown cancel matching agent work without late delivery.
+- Integrated bounded LLM dependency readiness and authenticated safe LLM/agent status metadata. Health never generates text, pulls a model, loads STT models, or exposes model paths, URLs, prompt/transcript content, credentials, or provider exceptions.
+
+### Files Changed
+
+- Runtime: `backend/src/tara_api/main.py`, `backend/src/tara_api/api/v1/websocket.py`, `backend/src/tara_api/api/v1/status.py`, `backend/src/tara_api/agent/context.py`, `backend/src/tara_api/agent/registry.py`, `backend/src/tara_api/agent/service.py`, `backend/src/tara_api/observability/application.py`, `backend/src/tara_api/observability/health.py`, `backend/src/tara_api/domain/health.py`, `backend/src/tara_api/domain/transport.py`, and `backend/src/tara_api/transport/protocol.py`.
+- Tests and lint alignment: `backend/tests/agent/test_agent_websocket.py`, `backend/tests/agent/test_agent_websocket_handoff.py`, `backend/tests/test_health.py`, `backend/tests/test_m5_framework.py`, and the M9 persistence-model import ordering in `backend/src/tara_api/persistence/models/`.
+- Documentation/configuration: `backend/.env.example`, `backend/README.md`, `docs/API_CONTRACT.md`, `docs/SECURITY_MODEL.md`, `docs/TEST_MATRIX.md`, `docs/MANUAL_TESTS.md`, and this status document.
+
+### Commands and Results
+
+| Command | Result |
+|---|---|
+| `python -m pytest backend/tests/agent/test_agent_websocket.py backend/tests/agent/test_agent_websocket_handoff.py -q` | Passed: 3 tests |
+| Targeted agent/STT/audio/transport/auth/health/migration regression set | Passed: 124 tests |
+| `python -m ruff check backend` | Passed |
+| `python -m mypy backend/src` | Passed: 73 source files |
+| `python -m pytest backend/tests -q` | Passed: 154 tests |
+| Root `pnpm validate` | Passed: frontend lint/typecheck/tests (8)/build plus backend Ruff/mypy/tests (154) |
+
+The only output warning is the upstream `StarletteDeprecationWarning` from `TestClient`. Validation used deterministic fakes, isolated SQLite databases, mocked local HTTP where existing adapter coverage requires it, and no model download, Ollama process, internet access, GPU, cloud service, TTS, tool, confirmation, or semantic-memory service.
+
+### Unresolved Blockers
+
+- None for M9 acceptance. The optional manual local-Ollama checks remain pending in `docs/MANUAL_TESTS.md` and do not block the offline automated acceptance gate.
+
+### Exact Recommended Next Milestone
+
+M10 - Streaming TTS and Barge-In. Do not begin M10 as part of M9 acceptance.
+
 ## M9C Progress - Agent Service, Queue, Persistence, and Cancellation
 
 - Completed scope: added a framework-independent single-pass `AgentService` and bounded process-local FIFO request registry. Requests bind server-authenticated owner/session, optional connection, conversation, source, optional final transcript, SHA-256 idempotency representation, and UTC identity metadata. Partial transcripts create no work; direct text requires an idempotency key.

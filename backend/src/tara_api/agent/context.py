@@ -17,6 +17,7 @@ from tara_api.domain.agent import (
     ModelRole,
     StructuredContext,
 )
+from tara_api.persistence.database import Database
 from tara_api.persistence.repositories.interfaces import ConversationTurnRepository, StructuredMemoryRepository
 from tara_api.persistence.types import ConversationTurnRecord, ConversationTurnRole, StructuredMemoryRecord
 
@@ -144,3 +145,34 @@ class PersistenceStructuredContextProvider:
         if value.tzinfo is None:
             raise ValueError("context clock must return an aware UTC timestamp")
         return value.astimezone(UTC)
+
+
+class DatabaseStructuredContextProvider:
+    """Open a short-lived unit of work for one owner-bound context read."""
+
+    def __init__(
+        self,
+        database: Database,
+        *,
+        owner_id: UUID,
+        budget: ContextBudget,
+        policy: ContextSensitivityPolicy,
+        now: Callable[[], datetime],
+    ) -> None:
+        self._database = database
+        self._owner_id = owner_id
+        self._budget = budget
+        self._policy = policy
+        self._now = now
+
+    async def get_context(self, request: ContextRequest) -> StructuredContext:
+        async with self._database.unit_of_work() as unit_of_work:
+            provider = PersistenceStructuredContextProvider(
+                unit_of_work.memories,
+                unit_of_work.turns,
+                owner_id=self._owner_id,
+                budget=self._budget,
+                policy=self._policy,
+                now=self._now,
+            )
+            return await provider.get_context(request)

@@ -367,3 +367,11 @@ If suspicious behavior occurs:
 - The service executes at most one model call. Ambiguous, unsupported, and consequential routes complete with deterministic safe text and no model, tool, confirmation, action, shell, or code-execution path. A model response never authorizes an action.
 - Successful user/assistant turns and content-minimized request metadata persist transactionally. Stored metadata contains only source, lifecycle, route, provider/model identifiers, valid usage counts, and duration. It excludes prompts, context, source references, raw audio, credentials, tokens, provider exception text, and hidden reasoning.
 - Cancellation and timeout produce terminal states that suppress late results. Cross-owner, cross-session, and cross-connection lookup/cancel attempts use a non-enumerating failure path. Normal logging remains content-minimized; M9C adds no model-health or status endpoint integration.
+
+## 22. M9D Agent Transport and Health Boundary
+
+- `agent.request` accepts only bounded text, a direct-text idempotency key, and an optional UUID conversation ID through an already authenticated v1 WebSocket. Owner, session, connection, request, and transcript identities are server supplied and cannot be overridden by the payload.
+- The process-local request registry owns ordered lifecycle state and exactly one terminal result. Duplicate keys cannot produce a second provider call; cancellation, disconnect, session invalidation, and shutdown cancel matching work and suppress late output.
+- `agent.cancel` is owner/session/connection bound and uses a non-enumerating failure path. Events and final responses publish only through the originating live connection; no response is cross-delivered to another session or connection.
+- Only `transcript.final` invokes agent submission, bound to the server-issued transcription ID. Partial, canceled, failed, and timed-out STT outcomes cannot start an agent request.
+- `GET /api/v1/health/ready` includes bounded LLM dependency health. Optional disabled/unavailable LLMs degrade operational status without failing readiness; required unavailable LLMs fail readiness. Health and status never generate text, pull models, load STT models, or expose model URLs, paths, credentials, prompts, transcript content, or provider exceptions.

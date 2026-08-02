@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from tara_api.agent.registry import AgentJob, AgentRequestRegistry
+from tara_api.agent.registry import AgentJob, AgentLifecycleListener, AgentRequestHandle, AgentRequestRegistry
 from tara_api.agent.validation import DefaultModelResponseValidator
 from tara_api.domain.agent import (
     AgentError,
@@ -50,7 +50,7 @@ class AgentService:
         persistence: AgentPersistenceStore,
         session_validator: AgentSessionValidator,
         router: IntentRouter,
-        context_provider: Callable[[object], StructuredContextProvider],
+        context_provider: Callable[[UUID], StructuredContextProvider],
         prompt_builder: PromptBuilder,
         model_provider: LanguageModelProvider | None,
         context_token_budget: int,
@@ -80,6 +80,18 @@ class AgentService:
         *,
         connection_id: UUID | None = None,
     ) -> AgentResponse:
+        return await self.complete(
+            await self.begin(context, submission, connection_id=connection_id)
+        )
+
+    async def begin(
+        self,
+        context: AuthenticatedOwnerContext,
+        submission: AgentSubmission,
+        *,
+        connection_id: UUID | None = None,
+        listener: AgentLifecycleListener | None = None,
+    ) -> AgentRequestHandle:
         if not await self._session_validator.is_owner_session_active(context.owner.id, context.session.id):
             raise AgentServiceFailure(AgentError.SESSION_INVALIDATED)
         conversation_id = await self._resolve_conversation(context, submission)
@@ -97,9 +109,12 @@ class AgentService:
             self._idempotency_hash(submission),
         )
         try:
-            return await self._registry.submit(request, self._execute)
+            return await self._registry.begin(request, self._execute, listener=listener)
         except ValueError as error:
             raise AgentServiceFailure(self._error_from_value(error)) from error
+
+    async def complete(self, handle: AgentRequestHandle) -> AgentResponse:
+        return await self._registry.wait(handle)
 
     async def submit_final_transcript(
         self,
@@ -139,10 +154,12 @@ class AgentService:
         return canceled
 
     async def cancel_connection(self, connection_id: UUID) -> None:
-        await self._registry.cancel_connection(connection_id)
+        for request in await self._registry.cancel_connection(connection_id):
+            await self._safe_record_terminal(request, AgentState.CANCELED, AgentError.REQUEST_CANCELED)
 
     async def cancel_session(self, owner_id: UUID, session_id: UUID) -> None:
-        await self._registry.cancel_session(owner_id, session_id)
+        for request in await self._registry.cancel_session(owner_id, session_id):
+            await self._safe_record_terminal(request, AgentState.CANCELED, AgentError.SESSION_INVALIDATED)
 
     async def shutdown(self) -> None:
         await self._registry.shutdown()

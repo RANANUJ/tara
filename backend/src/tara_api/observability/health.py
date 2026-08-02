@@ -92,7 +92,11 @@ class DependencyHealthRegistry:
         return HealthCheckResult(check.name, state, check.severity, checked_at, latency_ms, diagnostic, self._last_success.get(check.name))
 
 
-def implemented_health_checks(database: Database, stt_check: HealthCheck | None = None) -> tuple[HealthCheck, ...]:
+def implemented_health_checks(
+    database: Database,
+    stt_check: HealthCheck | None = None,
+    llm_check: HealthCheck | None = None,
+) -> tuple[HealthCheck, ...]:
     async def application() -> tuple[HealthState, str | None]:
         return HealthState.HEALTHY, None
 
@@ -121,4 +125,4 @@ def implemented_health_checks(database: Database, stt_check: HealthCheck | None 
         CallableHealthCheck(DependencyName.AUTHENTICATION, HealthSeverity.REQUIRED, authentication),
         CallableHealthCheck(DependencyName.SCHEMA, HealthSeverity.OPTIONAL, schema),
     )
-    return checks + ((stt_check,) if stt_check else ())
+    return checks + tuple(check for check in (stt_check, llm_check) if check is not None)

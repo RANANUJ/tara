@@ -378,3 +378,14 @@ M9B tests use only the isolated SQLite fixtures and deterministic code paths. Th
 | Security | Prompt/auth material exclusion from persisted metadata, no confirmation/tool path, and deterministic consequential-action refusal | `backend/tests/agent/test_agent_security.py` |
 
 M9C tests use deterministic fake providers, isolated SQLite databases, and process-local workers only. They require no Ollama process, model pull, internet, cloud service, tool, WebSocket agent event, or device capability.
+
+## 18. M9D Agent Transport, Health, and Final Acceptance Coverage
+
+| Area | Implemented evidence | Test files |
+|---|---|---|
+| WebSocket agent protocol | Authenticated `agent.request`, strict payload rejection, ordered started/state/terminal delivery, and safe error payloads | `backend/tests/agent/test_agent_websocket.py` |
+| STT handoff | Final transcript submission starts one bound agent request; partial/failed/canceled STT paths remain excluded by the job publisher | `backend/tests/agent/test_agent_websocket_handoff.py`, `backend/tests/stt/test_transcription_websocket.py` |
+| Lifecycle safety | Registry shutdown cancellation cannot be swallowed by a worker; existing owner/session/connection cancellation and idempotency coverage remains active | `backend/tests/agent/test_agent_cancellation.py`, `backend/tests/agent/test_agent_cleanup.py`, `backend/tests/agent/test_agent_idempotency.py` |
+| LLM health/status | Disabled/fake/unavailable provider health, required/optional readiness semantics, and authenticated safe status fields | `backend/tests/agent/test_llm_health.py`, `backend/tests/test_health.py`, `backend/tests/test_readiness.py` |
+
+M9D standard validation uses only deterministic providers, isolated SQLite files, and mocked local HTTP where adapter coverage requires it. It does not require an Ollama process, model pull, internet access, cloud service, TTS, tool, confirmation, semantic retrieval, or device action.

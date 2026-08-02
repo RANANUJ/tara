@@ -387,3 +387,12 @@ The following checks are pending and must not be marked passed until performed o
 - Measure transcription latency and verify a later turn remains responsive after cancellation or timeout.
 - Inspect data and logs: no PCM/audio artifact remains, no transcript appears in normal logs, and authenticated status contains no model path or provider exception.
 - Restart the backend and verify readiness does not trigger a model load, inference, download, or network access.
+
+## 14. M9 Local Text-Agent Checks (Pending)
+
+- With `TARA_LLM_PROVIDER=disabled`, submit direct text through an authenticated WebSocket and verify a safe final `agent.error` without a provider call or connection close.
+- With a manually provisioned local Ollama model, submit normal text and verify the ordered `agent.started`, `agent.state`, and one final `agent.response`; verify no token/delta, TTS, tool, confirmation, or action event appears.
+- Send malformed payloads, repeated idempotency keys, foreign request IDs, cancel requests, disconnects, and session revocation during generation. Verify no duplicate model call, terminal replay, or cross-connection response.
+- Complete a voice turn and verify only `transcript.final` starts an agent request. Cancel/fail/timeout STT turns and verify none starts an agent request.
+- Toggle optional versus required LLM configuration while the local runtime is unavailable. Verify status is content-minimized, optional readiness remains available, required readiness fails, and no health check triggers generation or model pull.
+- Inspect logs, database metadata, and status output using synthetic canaries. Verify prompts, transcript text, provider exception text, URLs, credentials, and model paths are absent.

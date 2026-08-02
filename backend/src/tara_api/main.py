@@ -14,16 +14,28 @@ from tara_api.api.v1.auth import router as auth_router
 from tara_api.api.v1.health import router as health_router
 from tara_api.api.v1.status import router as status_router
 from tara_api.api.v1.websocket import router as websocket_router
+from tara_api.api.v1.websocket import submit_final_transcript
+from tara_api.agent.context import DatabaseStructuredContextProvider
+from tara_api.agent.context_policy import ContextSensitivityPolicy
+from tara_api.agent.fake import FakeLanguageModelProvider
+from tara_api.agent.health import LocalLanguageModelHealthProvider
+from tara_api.agent.ollama import OllamaLanguageModelProvider
+from tara_api.agent.prompt import DefaultPromptBuilder
+from tara_api.agent.registry import AgentRequestRegistry
+from tara_api.agent.routing import DeterministicIntentRouter
+from tara_api.agent.service import AgentService
 from tara_api.auth.rate_limit import InMemoryLoginRateLimiter
 from tara_api.auth.security import Argon2idPasswordHasher, SecureSessionTokenGenerator
 from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings, get_settings
-from tara_api.domain.health import DependencyName, HealthSeverity
+from tara_api.domain.agent import ContextBudget, ContextSensitivity, LanguageModelProvider, ProviderHealthState
+from tara_api.domain.health import DependencyName, HealthSeverity, HealthState
 from tara_api.domain.stt import TranscriptionJob
 from tara_api.observability.application import ApplicationStatusProvider
 from tara_api.observability.health import CallableHealthCheck, DependencyHealthRegistry, SystemClock, implemented_health_checks
 from tara_api.observability.logging import configure_logging, log_settings_loaded
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
+from tara_api.persistence.agent_store import SqlAlchemyAgentPersistenceStore
 from tara_api.persistence.database import Database
 from tara_api.transport.registry import InMemoryConnectionRegistry, RegistryEventPublisher
 from tara_api.transport.tickets import InMemoryConnectionTicketService
@@ -40,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await app.state.agent_service.shutdown()
         await database.dispose()
 
 
@@ -77,6 +90,63 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     )
     app.state.connection_registry = InMemoryConnectionRegistry(resolved_settings.websocket_max_connections_per_session)
     app.state.websocket_event_publisher = RegistryEventPublisher(app.state.connection_registry)
+    app.state.llm_provider = _language_model_provider(resolved_settings)
+    app.state.llm_health = LocalLanguageModelHealthProvider(
+        app.state.llm_provider,
+        required=resolved_settings.llm_required,
+        environment=resolved_settings.environment,
+        timeout_seconds=resolved_settings.health_check_timeout_ms / 1000,
+    )
+
+    async def llm_health_dependency() -> tuple[HealthState, str | None]:
+        snapshot = await app.state.llm_health.snapshot()
+        if snapshot.ready:
+            return HealthState.HEALTHY, None
+        if snapshot.state == ProviderHealthState.DISABLED:
+            return HealthState.HEALTHY, "Language model is disabled."
+        if snapshot.state == ProviderHealthState.DEGRADED:
+            return HealthState.DEGRADED, "Language model is degraded."
+        return HealthState.UNAVAILABLE, "Language model is unavailable."
+
+    app.state.llm_health_dependency = llm_health_dependency
+    context_budget = ContextBudget(
+        resolved_settings.agent_context_memory_limit,
+        resolved_settings.agent_context_recent_turn_limit,
+        resolved_settings.agent_context_memory_item_char_limit,
+        resolved_settings.agent_context_recent_turn_char_limit,
+        resolved_settings.agent_context_total_char_limit,
+        resolved_settings.agent_context_estimated_token_limit,
+    )
+    context_policy = ContextSensitivityPolicy(
+        ContextSensitivity(value) for value in resolved_settings.agent_context_allowed_sensitivities
+    )
+    app.state.agent_registry = AgentRequestRegistry(
+        maximum_queued=resolved_settings.agent_max_queued_requests,
+        maximum_concurrent=resolved_settings.agent_max_concurrent_requests,
+        maximum_per_connection=resolved_settings.agent_max_requests_per_connection,
+        maximum_per_session=resolved_settings.agent_max_requests_per_session,
+        maximum_per_owner=resolved_settings.agent_max_requests_per_owner,
+        maximum_terminal_records=resolved_settings.agent_max_terminal_records,
+        terminal_retention=timedelta(seconds=resolved_settings.agent_terminal_retention_seconds),
+    )
+    app.state.agent_service = AgentService(
+        registry=app.state.agent_registry,
+        persistence=SqlAlchemyAgentPersistenceStore(app.state.database),
+        session_validator=app.state.authentication_service,
+        router=DeterministicIntentRouter(resolved_settings.agent_intent_confidence_threshold),
+        context_provider=lambda owner_id: DatabaseStructuredContextProvider(
+            app.state.database,
+            owner_id=owner_id,
+            budget=context_budget,
+            policy=context_policy,
+            now=lambda: datetime.now(UTC),
+        ),
+        prompt_builder=DefaultPromptBuilder(),
+        model_provider=app.state.llm_provider,
+        context_token_budget=resolved_settings.llm_context_token_budget,
+        output_token_budget=resolved_settings.llm_output_token_budget,
+        timeout_seconds=resolved_settings.agent_request_timeout_seconds,
+    )
     app.state.stt_provider = None if resolved_settings.stt_provider == "disabled" else FakeSpeechToTextProvider() if resolved_settings.stt_provider == "fake" else FasterWhisperSpeechToTextProvider(resolved_settings.stt_model, resolved_settings.stt_device, resolved_settings.stt_compute_type, language_hint=resolved_settings.stt_language_hint, local_model_directory=resolved_settings.stt_local_model_directory)  # noqa: E501
 
     async def publish_stt_event(job: TranscriptionJob, event_type: str, payload: dict[str, object]) -> None:
@@ -88,11 +158,18 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         if context.owner_id != request.owner_id or context.session_id != request.session_id or context.connection_id != request.connection_id:
             return
         await connection.send_event(event_type, {"transcription_id": str(request.transcription_id), "audio_session_id": str(request.audio_session_id), "turn_id": str(request.turn_id), **payload})
+        transcript_text = payload.get("text")
+        if event_type == "transcript.final" and isinstance(transcript_text, str):
+            await submit_final_transcript(connection, transcript_text, request.transcription_id)
 
     app.state.stt_jobs = InMemoryTranscriptionJobs(app.state.stt_provider, publish_stt_event, resolved_settings.stt_max_queued_jobs, resolved_settings.stt_max_concurrent_jobs, resolved_settings.stt_timeout_seconds)
     app.state.stt_health = SttHealthProvider(app.state.stt_provider, app.state.stt_jobs, required=resolved_settings.stt_required, environment=resolved_settings.environment, language_mode=resolved_settings.stt_language_hint or "auto", partial_mode=resolved_settings.stt_partial_mode, max_queue=resolved_settings.stt_max_queued_jobs, max_concurrency=resolved_settings.stt_max_concurrent_jobs, timeout_seconds=resolved_settings.stt_health_timeout_ms / 1000)  # noqa: E501
     app.state.health_registry = DependencyHealthRegistry(
-        implemented_health_checks(app.state.database, CallableHealthCheck(DependencyName.STT, HealthSeverity.REQUIRED if resolved_settings.stt_required else HealthSeverity.OPTIONAL, app.state.stt_health.dependency)),
+        implemented_health_checks(
+            app.state.database,
+            CallableHealthCheck(DependencyName.STT, HealthSeverity.REQUIRED if resolved_settings.stt_required else HealthSeverity.OPTIONAL, app.state.stt_health.dependency),
+            CallableHealthCheck(DependencyName.LLM, HealthSeverity.REQUIRED if resolved_settings.llm_required else HealthSeverity.OPTIONAL, app.state.llm_health_dependency),
+        ),
         SystemClock(),
         resolved_settings.health_check_timeout_ms / 1000,
     )
@@ -111,6 +188,26 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(websocket_router, prefix="/api/v1")
     return app
+
+
+def _language_model_provider(settings: Settings) -> LanguageModelProvider | None:
+    if settings.llm_provider == "disabled":
+        return None
+    if settings.llm_provider == "fake":
+        return FakeLanguageModelProvider(
+            model_identifier="fake-local",
+            timeout_seconds=settings.llm_timeout_seconds,
+            environment=settings.environment,
+        )
+    return OllamaLanguageModelProvider(
+        settings.ollama_base_url,
+        settings.ollama_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+        context_token_budget=settings.llm_context_token_budget,
+        output_token_budget=settings.llm_output_token_budget,
+        temperature=settings.llm_temperature,
+        streaming=settings.llm_streaming,
+    )
 
 
 app = create_app()

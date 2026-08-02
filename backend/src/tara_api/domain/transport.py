@@ -39,6 +39,7 @@ class ConnectionTicket:
 class WebSocketConnection(Protocol):
     context: ConnectionContext
     state: ConnectionState
+    authenticated_context: AuthenticatedOwnerContext
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int) -> None: ...
 

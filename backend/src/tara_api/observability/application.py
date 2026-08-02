@@ -34,6 +34,13 @@ class ApplicationStatusProvider:
             max(0, round((time.monotonic() - self._started_monotonic) * 1000)),
             readiness.state,
             readiness.dependencies,
-            {"database_persistence": True, "owner_authentication": True, "session_management": True, "websocket_transport": True},
+            {
+                "database_persistence": True,
+                "owner_authentication": True,
+                "session_management": True,
+                "websocket_transport": True,
+                "local_text_agent": True,
+                "llm_final_response": True,
+            },
             self._build_revision,
         )
