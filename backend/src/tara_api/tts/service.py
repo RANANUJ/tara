@@ -24,7 +24,7 @@ from tara_api.domain.tts import (
     TextToSpeechProvider,
 )
 from tara_api.tts.chunking import chunk_synthesized_audio
-from tara_api.tts.registry import SynthesisJob, SynthesisRequestHandle, SynthesisRequestRegistry
+from tara_api.tts.registry import SynthesisJob, SynthesisLifecycleListener, SynthesisRequestHandle, SynthesisRequestRegistry
 from tara_api.tts.validation import normalize_synthesis_text, validated_result
 
 
@@ -60,7 +60,14 @@ class TextToSpeechService:
         self._maximum_chunk_bytes = maximum_chunk_bytes
         self._now = now
 
-    async def begin(self, context: AuthenticatedOwnerContext, command: SynthesisCommand, *, connection_id: UUID | None = None) -> SynthesisRequestHandle:
+    async def begin(
+        self,
+        context: AuthenticatedOwnerContext,
+        command: SynthesisCommand,
+        *,
+        connection_id: UUID | None = None,
+        listener: SynthesisLifecycleListener | None = None,
+    ) -> SynthesisRequestHandle:
         if not await self._session_validator.is_owner_session_active(context.owner.id, context.session.id):
             raise TextToSpeechServiceFailure(SpeechSynthesisError.SESSION_INVALIDATED)
         if self._provider is None:
@@ -104,7 +111,7 @@ class TextToSpeechService:
             identity.created_at,
         )
         try:
-            return await self._registry.begin(identity, provider_request, self._execute)
+            return await self._registry.begin(identity, provider_request, self._execute, listener=listener)
         except ValueError as error:
             raise TextToSpeechServiceFailure(self._error_from_value(error)) from error
 

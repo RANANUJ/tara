@@ -4,6 +4,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import uvicorn
 from fastapi import FastAPI
@@ -31,6 +32,7 @@ from tara_api.config.settings import Settings, get_settings
 from tara_api.domain.agent import ContextBudget, ContextSensitivity, LanguageModelProvider, ProviderHealthState
 from tara_api.domain.health import DependencyName, HealthSeverity, HealthState
 from tara_api.domain.stt import TranscriptionJob
+from tara_api.domain.tts import SpeechFormat, SpeechVoice, TextToSpeechProvider
 from tara_api.observability.application import ApplicationStatusProvider
 from tara_api.observability.health import CallableHealthCheck, DependencyHealthRegistry, SystemClock, implemented_health_checks
 from tara_api.observability.logging import configure_logging, log_settings_loaded
@@ -42,6 +44,13 @@ from tara_api.transport.tickets import InMemoryConnectionTicketService
 from tara_api.stt.faster_whisper import FasterWhisperSpeechToTextProvider
 from tara_api.stt.service import FakeSpeechToTextProvider, InMemoryTranscriptionJobs
 from tara_api.stt.health import SttHealthProvider
+from tara_api.tts.elevenlabs import ElevenLabsTextToSpeechProvider
+from tara_api.tts.fake import FakeTextToSpeechProvider
+from tara_api.tts.health import LocalTextToSpeechHealthProvider
+from tara_api.tts.piper import PiperTextToSpeechProvider
+from tara_api.tts.registry import SynthesisRequestRegistry
+from tara_api.tts.service import TextToSpeechService
+from tara_api.tts.source import InMemoryApprovedAgentResponseSource
 
 
 @asynccontextmanager
@@ -52,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await app.state.tts_service.shutdown()
         await app.state.agent_service.shutdown()
         await database.dispose()
 
@@ -147,6 +157,35 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         output_token_budget=resolved_settings.llm_output_token_budget,
         timeout_seconds=resolved_settings.agent_request_timeout_seconds,
     )
+    app.state.tts_provider = _text_to_speech_provider(resolved_settings)
+    app.state.tts_response_source = InMemoryApprovedAgentResponseSource(
+        resolved_settings.tts_max_terminal_records
+    )
+    app.state.tts_registry = SynthesisRequestRegistry(
+        maximum_queued=resolved_settings.tts_max_queued_requests,
+        maximum_concurrent=resolved_settings.tts_max_concurrent_requests,
+        maximum_per_connection=resolved_settings.tts_max_requests_per_connection,
+        maximum_per_session=resolved_settings.tts_max_requests_per_session,
+        maximum_per_owner=resolved_settings.tts_max_requests_per_owner,
+        maximum_terminal_records=resolved_settings.tts_max_terminal_records,
+        terminal_retention=timedelta(seconds=resolved_settings.tts_terminal_retention_seconds),
+        maximum_retained_audio_bytes=resolved_settings.tts_max_retained_audio_bytes,
+    )
+    app.state.tts_service = TextToSpeechService(
+        registry=app.state.tts_registry,
+        provider=app.state.tts_provider,
+        session_validator=app.state.authentication_service,
+        response_source=app.state.tts_response_source,
+        timeout_seconds=resolved_settings.tts_timeout_seconds,
+        maximum_chunk_bytes=resolved_settings.tts_max_chunk_bytes,
+    )
+    app.state.tts_health = LocalTextToSpeechHealthProvider(
+        app.state.tts_provider,
+        required=resolved_settings.tts_required,
+        environment=resolved_settings.environment,
+        language_mode=resolved_settings.tts_language_mode,
+        timeout_seconds=resolved_settings.health_check_timeout_ms / 1000,
+    )
     app.state.stt_provider = None if resolved_settings.stt_provider == "disabled" else FakeSpeechToTextProvider() if resolved_settings.stt_provider == "fake" else FasterWhisperSpeechToTextProvider(resolved_settings.stt_model, resolved_settings.stt_device, resolved_settings.stt_compute_type, language_hint=resolved_settings.stt_language_hint, local_model_directory=resolved_settings.stt_local_model_directory)  # noqa: E501
 
     async def publish_stt_event(job: TranscriptionJob, event_type: str, payload: dict[str, object]) -> None:
@@ -169,6 +208,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             app.state.database,
             CallableHealthCheck(DependencyName.STT, HealthSeverity.REQUIRED if resolved_settings.stt_required else HealthSeverity.OPTIONAL, app.state.stt_health.dependency),
             CallableHealthCheck(DependencyName.LLM, HealthSeverity.REQUIRED if resolved_settings.llm_required else HealthSeverity.OPTIONAL, app.state.llm_health_dependency),
+            CallableHealthCheck(DependencyName.TTS, HealthSeverity.REQUIRED if resolved_settings.tts_required else HealthSeverity.OPTIONAL, app.state.tts_health.dependency),
         ),
         SystemClock(),
         resolved_settings.health_check_timeout_ms / 1000,
@@ -208,6 +248,38 @@ def _language_model_provider(settings: Settings) -> LanguageModelProvider | None
         temperature=settings.llm_temperature,
         streaming=settings.llm_streaming,
     )
+
+
+def _text_to_speech_provider(settings: Settings) -> TextToSpeechProvider | None:
+    if settings.tts_provider == "disabled":
+        return None
+    voice = SpeechVoice(settings.tts_voice_identifier or "local-voice")
+    output_format = SpeechFormat(
+        sample_rate=settings.tts_output_sample_rate,
+        channels=settings.tts_output_channels,
+    )
+    if settings.tts_provider == "fake":
+        return cast(TextToSpeechProvider, FakeTextToSpeechProvider(
+            voice=voice,
+            timeout_seconds=settings.tts_timeout_seconds,
+            environment=settings.environment,
+        ))
+    if settings.tts_provider == "piper":
+        return cast(TextToSpeechProvider, PiperTextToSpeechProvider(
+            settings.tts_piper_executable,
+            settings.tts_piper_voice_model_path or "",
+            voice=voice,
+            output_format=output_format,
+            voice_config_path=settings.tts_piper_voice_config_path,
+            timeout_seconds=settings.tts_timeout_seconds,
+        ))
+    return cast(TextToSpeechProvider, ElevenLabsTextToSpeechProvider(
+        settings.elevenlabs_api_key,
+        voice,
+        settings.elevenlabs_model,
+        output_format=output_format,
+        timeout_seconds=settings.tts_timeout_seconds,
+    ))
 
 
 app = create_app()

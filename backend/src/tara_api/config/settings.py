@@ -63,10 +63,11 @@ class Settings(BaseSettings):
     tts_max_requests_per_connection: int = Field(default=2, ge=1, le=16)
     tts_max_requests_per_session: int = Field(default=4, ge=1, le=32)
     tts_max_requests_per_owner: int = Field(default=8, ge=1, le=64)
-    tts_max_chunk_bytes: int = Field(default=64 * 1024, ge=2, le=64 * 1024)
+    tts_max_chunk_bytes: int = Field(default=8 * 1024, ge=2, le=64 * 1024)
     tts_max_terminal_records: int = Field(default=32, ge=1, le=256)
     tts_terminal_retention_seconds: int = Field(default=300, ge=1, le=3600)
     tts_max_retained_audio_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    tts_delivery_timeout_seconds: int = Field(default=5, ge=1, le=60)
     tts_output_encoding: Literal["pcm_s16le"] = "pcm_s16le"
     tts_output_sample_rate: Literal[16000, 22050, 24000] = 22050
     tts_output_channels: Literal[1] = 1

@@ -34,6 +34,7 @@ class StatusResponse(BaseModel):
     stt: dict[str, object]
     llm: dict[str, object]
     agent: dict[str, object]
+    tts: dict[str, object]
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -45,7 +46,9 @@ async def service_status(
     snapshot = await provider.snapshot()
     stt = await request.app.state.stt_health.snapshot()
     llm = await request.app.state.llm_health.snapshot()
+    tts = await request.app.state.tts_health.snapshot()
     queued, active, terminal = await request.app.state.agent_registry.counts()
+    tts_queued, tts_active, _tts_terminal, retained_audio = await request.app.state.tts_registry.counts()
     return StatusResponse(
         application_name=snapshot.application_name,
         version=snapshot.version,
@@ -87,5 +90,28 @@ async def service_status(
             "agent_queue_depth": queued,
             "agent_active_requests": active,
             "agent_terminal_records": terminal,
+        },
+        tts={
+            "tts_configured": tts.configured,
+            "tts_required": tts.required,
+            "tts_provider": tts.provider,
+            "tts_state": tts.state.value,
+            "tts_ready": tts.ready,
+            "tts_voice": tts.voice,
+            "tts_language_mode": tts.language_mode,
+            "tts_format": {
+                "encoding": tts.output_format.encoding.value,
+                "sample_rate": tts.output_format.sample_rate,
+                "channels": tts.output_format.channels,
+                "bit_depth": tts.output_format.bit_depth,
+            }
+            if tts.output_format
+            else None,
+            "tts_streaming_mode": "post_synthesis_chunks",
+            "tts_queue_depth": tts_queued,
+            "tts_active_requests": tts_active,
+            "tts_retained_audio_bytes": retained_audio,
+            "tts_max_queue": request.app.state.settings.tts_max_queued_requests,
+            "tts_max_concurrency": request.app.state.settings.tts_max_concurrent_requests,
         },
     )

@@ -18,6 +18,8 @@ from tara_api.domain.tts import (
     SynthesisRequestRecord,
 )
 
+SynthesisLifecycleListener = Callable[[SynthesisRequestIdentity, SpeechSynthesisState], Awaitable[None]]
+
 _TERMINAL = frozenset({SpeechSynthesisState.COMPLETED, SpeechSynthesisState.CANCELED, SpeechSynthesisState.TIMED_OUT, SpeechSynthesisState.FAILED})
 _ACTIVE = frozenset({SpeechSynthesisState.PREPARING, SpeechSynthesisState.SYNTHESIZING, SpeechSynthesisState.CHUNKING})
 _ALLOWED = {
@@ -47,6 +49,7 @@ class SynthesisJob:
     execution_task: asyncio.Future[SpeechSynthesisResult] | None = None
     audio: SpeechSynthesisResult | None = None
     error: SpeechSynthesisError | None = None
+    listener: SynthesisLifecycleListener | None = None
 
 
 class SynthesisRequestRegistry:
@@ -87,6 +90,8 @@ class SynthesisRequestRegistry:
         identity: SynthesisRequestIdentity,
         provider_request: SpeechSynthesisRequest,
         operation: Callable[[SynthesisJob], Awaitable[SpeechSynthesisResult]],
+        *,
+        listener: SynthesisLifecycleListener | None = None,
     ) -> SynthesisRequestHandle:
         async with self._lock:
             self._prune_locked(datetime.now(UTC))
@@ -96,7 +101,7 @@ class SynthesisRequestRegistry:
             pending = tuple(job for job in self._jobs.values() if job.state not in _TERMINAL)
             self._check_limits(identity, pending)
             completion = asyncio.get_running_loop().create_future()
-            job = SynthesisJob(identity, provider_request, completion=completion, operation=operation)
+            job = SynthesisJob(identity, provider_request, completion=completion, operation=operation, listener=listener)
             self._jobs[identity.synthesis_request_id] = job
             self._idempotency[self._key(identity)] = identity.synthesis_request_id
             self._queue.put_nowait(identity.synthesis_request_id)
@@ -107,6 +112,7 @@ class SynthesisRequestRegistry:
         return await asyncio.shield(handle.completion)
 
     async def transition(self, request_id: UUID, target: SpeechSynthesisState) -> bool:
+        notification: tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None = None
         async with self._lock:
             job = self._jobs.get(request_id)
             if job is None or job.state in _TERMINAL:
@@ -115,7 +121,10 @@ class SynthesisRequestRegistry:
                 raise ValueError("invalid TTS state transition")
             job.state = target
             job.updated_at = datetime.now(UTC)
-            return True
+            if job.listener is not None:
+                notification = job.listener, job.identity, target
+        await self._notify(notification)
+        return True
 
     async def consume_audio(self, request_id: UUID, *, owner_id: UUID, session_id: UUID, connection_id: UUID | None) -> SpeechSynthesisResult | None:
         async with self._lock:
@@ -128,14 +137,16 @@ class SynthesisRequestRegistry:
             return result
 
     async def cancel(self, request_id: UUID, *, owner_id: UUID, session_id: UUID, connection_id: UUID | None, error: SpeechSynthesisError = SpeechSynthesisError.REQUEST_CANCELED) -> bool:
+        notification: tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None = None
         async with self._lock:
             job = self._matching_job(request_id, owner_id, session_id, connection_id)
             if job is None:
                 return False
             if job.state in _TERMINAL:
                 return job.state == SpeechSynthesisState.CANCELED
-            self._cancel_locked(job, error)
-            return True
+            notification = self._cancel_locked(job, error)
+        await self._notify(notification)
+        return True
 
     async def cancel_connection(self, connection_id: UUID) -> tuple[SynthesisRequestIdentity, ...]:
         return await self._cancel_matching(lambda job: job.identity.connection_id == connection_id, SpeechSynthesisError.REQUEST_CANCELED)
@@ -197,48 +208,66 @@ class SynthesisRequestRegistry:
                 self._queue.task_done()
 
     async def _complete(self, job: SynthesisJob, result: SpeechSynthesisResult) -> None:
+        notification: tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None = None
         async with self._lock:
             if job.state in _TERMINAL:
                 return
             if job.state != SpeechSynthesisState.CHUNKING:
-                self._finish_locked(job, SpeechSynthesisState.FAILED, SpeechSynthesisError.INTERNAL_TTS_ERROR)
-                return
-            self._evict_audio_locked(required=len(result.audio))
-            if self._retained_audio_bytes + len(result.audio) > self._maximum_retained_audio_bytes:
-                self._finish_locked(job, SpeechSynthesisState.FAILED, SpeechSynthesisError.RETAINED_AUDIO_LIMIT)
-                return
-            job.audio = result
-            self._retained_audio_bytes += len(result.audio)
-            job.provider_request = None
-            self._finish_locked(job, SpeechSynthesisState.COMPLETED, None)
+                notification = self._finish_locked(job, SpeechSynthesisState.FAILED, SpeechSynthesisError.INTERNAL_TTS_ERROR)
+            else:
+                self._evict_audio_locked(required=len(result.audio))
+                if self._retained_audio_bytes + len(result.audio) > self._maximum_retained_audio_bytes:
+                    notification = self._finish_locked(job, SpeechSynthesisState.FAILED, SpeechSynthesisError.RETAINED_AUDIO_LIMIT)
+                else:
+                    job.audio = result
+                    self._retained_audio_bytes += len(result.audio)
+                    job.provider_request = None
+                    notification = self._finish_locked(job, SpeechSynthesisState.COMPLETED, None)
+        await self._notify(notification)
 
     async def _finish(self, job: SynthesisJob, state: SpeechSynthesisState, error: SpeechSynthesisError) -> None:
+        notification: tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None = None
         async with self._lock:
             if job.state not in _TERMINAL:
-                self._finish_locked(job, state, error)
+                notification = self._finish_locked(job, state, error)
+        await self._notify(notification)
 
     async def _cancel_matching(self, predicate: Callable[[SynthesisJob], bool], error: SpeechSynthesisError) -> tuple[SynthesisRequestIdentity, ...]:
+        notifications: list[tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None] = []
         async with self._lock:
             identities = []
             for job in self._jobs.values():
                 if predicate(job) and job.state not in _TERMINAL:
                     identities.append(job.identity)
-                    self._cancel_locked(job, error)
-            return tuple(identities)
+                    notifications.append(self._cancel_locked(job, error))
+        for notification in notifications:
+            await self._notify(notification)
+        return tuple(identities)
 
-    def _cancel_locked(self, job: SynthesisJob, error: SpeechSynthesisError) -> None:
+    def _cancel_locked(self, job: SynthesisJob, error: SpeechSynthesisError) -> tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None:
         if job.execution_task is not None:
             job.execution_task.cancel()
         self._release_audio_locked(job)
-        self._finish_locked(job, SpeechSynthesisState.CANCELED, error)
+        return self._finish_locked(job, SpeechSynthesisState.CANCELED, error)
 
-    def _finish_locked(self, job: SynthesisJob, state: SpeechSynthesisState, error: SpeechSynthesisError | None) -> None:
+    def _finish_locked(self, job: SynthesisJob, state: SpeechSynthesisState, error: SpeechSynthesisError | None) -> tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None:
         job.state = state
         job.error = error
         job.updated_at = datetime.now(UTC)
         job.provider_request = None
         if job.completion is not None and not job.completion.done():
             job.completion.set_result(self._record(job))
+        return (job.listener, job.identity, state) if job.listener is not None else None
+
+    @staticmethod
+    async def _notify(notification: tuple[SynthesisLifecycleListener, SynthesisRequestIdentity, SpeechSynthesisState] | None) -> None:
+        if notification is None:
+            return
+        listener, identity, state = notification
+        try:
+            await listener(identity, state)
+        except Exception:
+            return
 
     def _record(self, job: SynthesisJob) -> SynthesisRequestRecord:
         audio = job.audio

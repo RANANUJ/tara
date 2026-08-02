@@ -343,3 +343,19 @@ M9D adds final-only local text-agent events to the existing authenticated v1 Web
 | Server | `agent.error` | optional `request_id`, stable `code`, safe message | Rejection or failed/timed-out terminal result; never exposes prompt, model path, URL, stack trace, or provider exception. |
 
 Malformed agent payloads are rejected without accepting work. Duplicate direct-text idempotency keys never create a second provider call. A final `transcript.final` may start one bound agent request using the server-issued transcription ID; partial, canceled, timed-out, and failed transcript events never do. The agent response is published only through the originating connection and is suppressed after connection close or session invalidation.
+
+## 22. M10C TTS WebSocket Contract
+
+M10C adds server-only handoff from a completed successful `agent.response` to final-only TTS. Clients cannot request arbitrary synthesis text or supply provider, owner, session, connection, or idempotency identity. With TTS disabled, the text response remains successful and no TTS event is emitted.
+
+| Direction | Event | Safe payload |
+| --- | --- | --- |
+| Server | `tts.started` | synthesis, agent request, conversation IDs; provider; voice; PCM format |
+| Server | `tts.state` | synthesis ID and lifecycle state |
+| Server | `tts.audio.start` | validated PCM metadata, total bytes/chunks/duration, `post_synthesis_pcm` mode |
+| Server | `tts.audio.chunk` | synthesis ID, ordered sequence/offset/length/final flag, bounded `audio_base64` PCM payload |
+| Server | `tts.audio.end` | synthesis ID, delivered counts, duration, completion timestamp |
+| Server | `tts.canceled` / `tts.error` | synthesis ID where safe, stable code and generic message |
+| Client | `tts.cancel` | synthesis request UUID only |
+
+Chunks are final, post-synthesis raw mono signed-16-bit little-endian PCM—not provider-real-time streaming and never standalone WAV fragments. Chunks are delivered only to the originating authenticated connection. `tts.cancel` is connection-bound, idempotent for a canceled request, and never accepts caller identity fields.

@@ -100,6 +100,8 @@ def test_validation_and_status_are_safe_and_authenticated(client: TestClient) ->
     assert body["stt"]["stt_active_jobs"] == 0
     assert body["llm"]["llm_configured"] is False
     assert body["agent"]["agent_available"] is False
+    assert body["tts"]["tts_provider"] == "disabled"
+    assert body["tts"]["tts_queue_depth"] == 0
     rendered = str(body).lower()
     assert "sqlite" not in rendered
     assert "token" not in rendered

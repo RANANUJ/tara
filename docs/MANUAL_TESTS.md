@@ -392,6 +392,13 @@ The following checks are pending and must not be marked passed until performed o
 
 - With `TARA_LLM_PROVIDER=disabled`, submit direct text through an authenticated WebSocket and verify a safe final `agent.error` without a provider call or connection close.
 - With a manually provisioned local Ollama model, submit normal text and verify the ordered `agent.started`, `agent.state`, and one final `agent.response`; verify no token/delta, TTS, tool, confirmation, or action event appears.
+
+## 15. M10 Foreground TTS Checks (Pending)
+
+- Verify disabled TTS leaves the final text response visible and emits no false audio success.
+- With an explicitly provisioned Piper voice, test English, Hindi, mixed text, long responses, repeated turns, explicit Stop, foreground speech during playback, headphones versus speakers, slow clients, disconnect, session revocation, queue saturation, CPU/memory/latency, and log redaction.
+- If explicitly enabled, repeat synthetic-only checks with ElevenLabs and confirm cloud disclosure, bounded request text, and no key/log leakage. Do not mark these manual provider/browser checks passed until performed.
+- Verify autoplay permission, suspended-tab behavior, and echo-cancellation limitations in supported browsers. Background, screen-off, wake-word, and native mobile behavior are out of scope.
 - Send malformed payloads, repeated idempotency keys, foreign request IDs, cancel requests, disconnects, and session revocation during generation. Verify no duplicate model call, terminal replay, or cross-connection response.
 - Complete a voice turn and verify only `transcript.final` starts an agent request. Cancel/fail/timeout STT turns and verify none starts an agent request.
 - Toggle optional versus required LLM configuration while the local runtime is unavailable. Verify status is content-minimized, optional readiness remains available, required readiness fails, and no health check triggers generation or model pull.

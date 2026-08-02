@@ -60,6 +60,12 @@ The process-local FIFO registry uses `TARA_TTS_MAX_QUEUED_REQUESTS`, `TARA_TTS_M
 
 Generated audio remains in bounded process memory only, governed by `TARA_TTS_MAX_RETAINED_AUDIO_BYTES`. It is released after consumption, cancellation, timeout, terminal expiry, eviction, or shutdown. No text, audio bytes, temporary audio files, provider stderr, model paths, or credentials are persisted in SQLite or logged. M10B has no WebSocket delivery, playback, barge-in, or UI integration.
 
+## M10C foreground TTS transport
+
+M10C automatically hands a completed successful agent response to configured TTS on its originating authenticated WebSocket connection. Server events are `tts.started`, `tts.state`, `tts.audio.start`, bounded base64 `tts.audio.chunk`, `tts.audio.end`, `tts.canceled`, and sanitized `tts.error`; clients may send only `tts.cancel` with a synthesis UUID. Audio is final post-synthesis raw mono PCM, not provider streaming or standalone WAV fragments.
+
+Frontend playback is foreground-only through Web Audio and requires a browser user gesture. It has an explicit Stop seam and foreground VAD barge-in seam, clears buffers on cancel/error/socket close, and does not persist audio. Autoplay restrictions, suspended tabs, echo cancellation, and speaker feedback are browser/device limitations. No wake word, background/screen-off playback, native bridge, or provider fallback is implemented.
+
 ## M9D agent transport and readiness
 
 The authenticated v1 WebSocket accepts direct `agent.request` text with an idempotency key and optional conversation UUID, plus owner/session/connection-bound `agent.cancel`. It publishes final-only `agent.started`, `agent.state`, `agent.response`, `agent.canceled`, and sanitized `agent.error` events. There is no REST agent endpoint, token streaming, TTS, tool execution, confirmation, or device action in M9.

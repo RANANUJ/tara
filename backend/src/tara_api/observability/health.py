@@ -96,6 +96,7 @@ def implemented_health_checks(
     database: Database,
     stt_check: HealthCheck | None = None,
     llm_check: HealthCheck | None = None,
+    tts_check: HealthCheck | None = None,
 ) -> tuple[HealthCheck, ...]:
     async def application() -> tuple[HealthState, str | None]:
         return HealthState.HEALTHY, None
@@ -125,4 +126,4 @@ def implemented_health_checks(
         CallableHealthCheck(DependencyName.AUTHENTICATION, HealthSeverity.REQUIRED, authentication),
         CallableHealthCheck(DependencyName.SCHEMA, HealthSeverity.OPTIONAL, schema),
     )
-    return checks + tuple(check for check in (stt_check, llm_check) if check is not None)
+    return checks + tuple(check for check in (stt_check, llm_check, tts_check) if check is not None)

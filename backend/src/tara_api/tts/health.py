@@ -6,6 +6,7 @@ import asyncio
 import time
 from datetime import UTC, datetime
 
+from tara_api.domain.health import HealthState
 from tara_api.domain.tts import (
     SpeechProviderHealth,
     SpeechProviderState,
@@ -39,6 +40,18 @@ class LocalTextToSpeechHealthProvider:
             return self._snapshot(True, self._provider.name, SpeechProviderState.UNAVAILABLE, False, checked_at, started, SpeechSynthesisError.PROVIDER_UNAVAILABLE)
         provider = f"fake-{self._environment}" if self._provider.name == "fake" else self._provider.name
         return self._snapshot(True, provider, readiness.state, readiness.ready, checked_at, started, readiness.diagnostic_code)
+
+    async def dependency(self) -> tuple[HealthState, str | None]:
+        """Return safe readiness without generating audio or loading a model."""
+
+        snapshot = await self.snapshot()
+        if snapshot.ready:
+            return HealthState.HEALTHY, None
+        if snapshot.state is SpeechProviderState.DISABLED:
+            return HealthState.HEALTHY, "Text-to-speech is disabled."
+        if snapshot.state is SpeechProviderState.DEGRADED:
+            return HealthState.DEGRADED, "Text-to-speech is degraded."
+        return HealthState.UNAVAILABLE, "Text-to-speech is unavailable."
 
     def _snapshot(
         self,

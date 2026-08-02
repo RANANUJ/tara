@@ -413,3 +413,13 @@ M10A real provider checks are opt-in under tts_integration. Standard CI uses no 
 | Privacy and isolation | Cross-connection source rejection and structured-log redaction of text/audio/token/stderr fields | `backend/tests/tts/test_tts_service_security.py` |
 
 M10B standard validation uses deterministic fakes and mocked provider boundaries only. It requires no Piper installation, ElevenLabs credential or request, model download, internet access, WebSocket delivery, playback, barge-in, or frontend voice feature.
+
+## 21. M10C TTS Transport, Playback, and Final Acceptance Coverage
+
+| Area | Implemented evidence | Test files |
+| --- | --- | --- |
+| WebSocket handoff/delivery | Successful fake-agent handoff, ordered lifecycle events, final PCM start/chunks/end, and client cancel shape | `backend/tests/tts/test_tts_websocket.py` |
+| Health and authenticated status | Required unavailable readiness and safe disabled status counters | `backend/tests/tts/test_tts_health_integration.py` |
+| Browser playback | Mocked Web Audio activation, ordered chunk acceptance, fail-closed ordering, explicit Stop, VAD barge-in, and suspended context | `frontend/tests/unit/tts-playback.test.ts` |
+
+Standard M10C validation uses fake providers and mocked Web Audio only. It performs no Piper install, ElevenLabs request, model download, internet access, real microphone/speaker use, background capture, wake-word operation, or native-device action.

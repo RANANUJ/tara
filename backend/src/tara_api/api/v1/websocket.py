@@ -2,6 +2,7 @@
 # ruff: noqa: I001
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -30,6 +31,10 @@ from tara_api.domain.stt import TranscriptionRequest
 from tara_api.stt.service import InMemoryTranscriptionJobs
 from tara_api.agent.registry import AgentRequestHandle
 from tara_api.agent.service import AgentService, AgentServiceFailure
+from tara_api.domain.tts import SpeechSynthesisError, SpeechSynthesisState, SynthesisCommand, SynthesisRequestIdentity
+from tara_api.tts.registry import SynthesisRequestHandle
+from tara_api.tts.service import TextToSpeechService, TextToSpeechServiceFailure
+from tara_api.tts.source import InMemoryApprovedAgentResponseSource
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger("tara_api")
@@ -55,6 +60,12 @@ class AgentCancelEvent(BaseModel):
     request_id: UUID
 
 
+class TtsCancelEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    synthesis_request_id: UUID
+
+
 class TransportConnection:
     def __init__(
         self,
@@ -62,6 +73,10 @@ class TransportConnection:
         context: ConnectionContext,
         authenticated_context: AuthenticatedOwnerContext,
         agent_service: AgentService,
+        tts_service: TextToSpeechService,
+        tts_source: InMemoryApprovedAgentResponseSource,
+        tts_enabled: bool,
+        tts_delivery_timeout_seconds: float,
     ) -> None:
         self._websocket = websocket
         self.context = context
@@ -75,6 +90,12 @@ class TransportConnection:
         self.authenticated_context = authenticated_context
         self.agent_service = agent_service
         self.agent_tasks: set[asyncio.Task[None]] = set()
+        self.tts_service = tts_service
+        self.tts_source = tts_source
+        self.tts_enabled = tts_enabled
+        self.tts_delivery_timeout_seconds = tts_delivery_timeout_seconds
+        self.tts_tasks: dict[UUID, asyncio.Task[None]] = {}
+        self.tts_terminal: set[UUID] = set()
 
     async def send_event(self, event_type: str, payload: dict[str, object], sequence: int | None = None) -> None:
         event = ServerEvent(
@@ -151,6 +172,10 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         ConnectionContext(uuid4(), context.owner.id, context.session.id, 1, websocket_scope_time(), correlation_id),
         context,
         cast(AgentService, app.state.agent_service),
+        cast(TextToSpeechService, app.state.tts_service),
+        cast(InMemoryApprovedAgentResponseSource, app.state.tts_response_source),
+        app.state.tts_provider is not None,
+        float(settings.tts_delivery_timeout_seconds),
     )
     connection.transcription_jobs = cast(InMemoryTranscriptionJobs, app.state.stt_jobs)
     await websocket.accept()
@@ -171,6 +196,7 @@ async def websocket_session(websocket: WebSocket, ticket: str | None = None) -> 
         connection.clear_audio_session(canceled=True)
         if connection.transcription_jobs is not None:
             await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
+        await _cancel_tts_connection(connection)
         await registry.remove(connection.context.connection_id)
         await connection.close(1000, "Closed.")
         _log("websocket_closed", connection=connection, outcome=connection.state.value)
@@ -246,6 +272,8 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             await _submit_agent_request(connection, event.payload)
         elif event.type == "agent.cancel":
             await _cancel_agent_request(connection, event.payload)
+        elif event.type == "tts.cancel":
+            await _cancel_tts_request(connection, event.payload)
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
@@ -374,6 +402,8 @@ async def _handle_audio_frame(connection: TransportConnection, data: bytes) -> N
         await connection.send_event("audio.level", {"level": round(smoothed_level, 3)})
     for event_type in events:
         await connection.send_event(event_type, {"audio_session_id": str(connection.audio_session.session_id)})
+        if event_type == "vad.speech.started":
+            await _cancel_active_tts(connection)
         if event_type == "vad.turn.completed":
             pcm = connection.audio_session.take_completed_pcm()
             if pcm and connection.transcription_jobs is not None:
@@ -400,6 +430,7 @@ async def _cancel_connection_jobs(connection: TransportConnection) -> None:
     if connection.transcription_jobs is not None:
         await connection.transcription_jobs.cancel_connection(connection.context.connection_id)
     await connection.agent_service.cancel_connection(connection.context.connection_id)
+    await _cancel_tts_connection(connection)
     if connection.agent_tasks:
         await asyncio.gather(*tuple(connection.agent_tasks), return_exceptions=True)
 
@@ -459,7 +490,7 @@ async def _begin_agent_request(connection: TransportConnection, submission: Agen
         },
     )
     await publish_state(handle.request.request_id, AgentState.QUEUED)
-    task = asyncio.create_task(_complete_agent_request(connection, connection.agent_service, handle.request.request_id, handle))
+    task = asyncio.create_task(_complete_agent_request(connection, connection.agent_service, handle))
     connection.agent_tasks.add(task)
     task.add_done_callback(connection.agent_tasks.discard)
 
@@ -476,7 +507,6 @@ async def submit_final_transcript(connection: TransportConnection, text: str, tr
 async def _complete_agent_request(
     connection: TransportConnection,
     service: AgentService,
-    request_id: UUID,
     handle: AgentRequestHandle,
 ) -> None:
     try:
@@ -485,12 +515,14 @@ async def _complete_agent_request(
         return
     except Exception:
         if connection.state == ConnectionState.ACTIVE:
-            await _send_agent_error(connection, str(request_id), AgentError.INTERNAL_AGENT_ERROR)
+            await _send_agent_error(connection, str(handle.request.request_id), AgentError.INTERNAL_AGENT_ERROR)
         return
     if connection.state != ConnectionState.ACTIVE:
         return
     if response.state == AgentState.COMPLETED:
         await connection.send_event("agent.response", {"request_id": str(response.request_id), "text": response.text})
+        if response.error is None:
+            await _begin_tts_handoff(connection, handle.request, response)
     elif response.state == AgentState.CANCELED:
         await connection.send_event("agent.canceled", {"request_id": str(response.request_id)})
     else:
@@ -502,3 +534,192 @@ async def _send_agent_error(connection: TransportConnection, request_id: str | N
     if request_id is not None:
         payload["request_id"] = request_id
     await connection.send_event("agent.error", payload)
+
+
+async def _begin_tts_handoff(connection: TransportConnection, request: AgentRequest, response: object) -> None:
+    """Start exactly one internal TTS request from a completed, delivered agent response."""
+
+    if not connection.tts_enabled or connection.state != ConnectionState.ACTIVE:
+        return
+    from tara_api.domain.agent import AgentResponse
+
+    if not isinstance(response, AgentResponse) or not await connection.tts_source.register(request, response):
+        return
+
+    settings = cast(Settings, connection._websocket.app.state.settings)  # noqa: SLF001
+    provider = connection.tts_service._provider  # noqa: SLF001
+    if provider is None:
+        return
+    command = SynthesisCommand(
+        request.request_id,
+        provider.voice,
+        _tts_language(settings.tts_language_mode),
+        provider.supported_formats[0],
+    )
+
+    async def listener(identity: SynthesisRequestIdentity, state: SpeechSynthesisState) -> None:
+        if connection.state != ConnectionState.ACTIVE or identity.synthesis_request_id in connection.tts_terminal:
+            return
+        if state is not SpeechSynthesisState.COMPLETED:
+            await connection.send_event("tts.state", {"synthesis_request_id": str(identity.synthesis_request_id), "state": state.value})
+
+    try:
+        handle = await connection.tts_service.begin(
+            connection.authenticated_context,
+            command,
+            connection_id=connection.context.connection_id,
+            listener=listener,
+        )
+    except TextToSpeechServiceFailure:
+        await connection.tts_source.discard(request.request_id)
+        return
+    if not handle.created:
+        return
+    identity = handle.identity
+    await connection.send_event(
+        "tts.started",
+        {
+            "synthesis_request_id": str(identity.synthesis_request_id),
+            "agent_request_id": str(identity.agent_request_id),
+            "conversation_id": str(identity.conversation_id),
+            "provider": identity.provider,
+            "voice": identity.voice.identifier,
+            "format": _format_payload(identity),
+        },
+    )
+    await connection.send_event("tts.state", {"synthesis_request_id": str(identity.synthesis_request_id), "state": SpeechSynthesisState.QUEUED.value})
+    task = asyncio.create_task(_complete_tts_delivery(connection, handle))
+    connection.tts_tasks[identity.synthesis_request_id] = task
+    task.add_done_callback(lambda _task: connection.tts_tasks.pop(identity.synthesis_request_id, None))
+
+
+def _tts_language(language_mode: str):
+    from tara_api.domain.tts import SpeechLanguage
+
+    return {"en": SpeechLanguage.ENGLISH, "hi": SpeechLanguage.HINDI, "mixed": SpeechLanguage.MIXED}.get(language_mode, SpeechLanguage.MIXED)
+
+
+def _format_payload(identity: SynthesisRequestIdentity) -> dict[str, object]:
+    output = identity.output_format
+    return {"encoding": output.encoding.value, "sample_rate": output.sample_rate, "channels": output.channels, "bit_depth": output.bit_depth, "container": output.container.value}
+
+
+async def _complete_tts_delivery(connection: TransportConnection, handle: SynthesisRequestHandle) -> None:
+    request_id = handle.identity.synthesis_request_id
+    try:
+        completed = await connection.tts_service.complete(handle)
+        result = completed.result
+        if result is None or connection.state != ConnectionState.ACTIVE or request_id in connection.tts_terminal:
+            return
+        await _send_tts_event(
+            connection,
+            "tts.audio.start",
+            {
+                "synthesis_request_id": str(request_id),
+                **_format_payload(handle.identity),
+                "total_bytes": len(result.audio),
+                "total_chunks": len(result.chunks),
+                "duration_ms": result.timing.audio_duration_ms,
+                "chunking_mode": "post_synthesis_pcm",
+                "streaming_mode": "final_only",
+            },
+        )
+        await asyncio.sleep(0.001)
+        delivered_bytes = 0
+        for chunk in result.chunks:
+            if connection.state != ConnectionState.ACTIVE or request_id in connection.tts_terminal:
+                return
+            await _send_tts_event(
+                connection,
+                "tts.audio.chunk",
+                {
+                    "synthesis_request_id": str(request_id),
+                    "sequence": chunk.sequence,
+                    "byte_offset": chunk.byte_offset,
+                    "byte_length": chunk.byte_length,
+                    "final": chunk.is_final,
+                    "audio_base64": base64.b64encode(chunk.audio).decode("ascii"),
+                },
+            )
+            delivered_bytes += len(chunk.audio)
+            await asyncio.sleep(0.001)
+        if connection.state != ConnectionState.ACTIVE or request_id in connection.tts_terminal:
+            return
+        await _send_tts_event(
+            connection,
+            "tts.audio.end",
+            {
+                "synthesis_request_id": str(request_id),
+                "delivered_chunks": len(result.chunks),
+                "delivered_bytes": delivered_bytes,
+                "duration_ms": result.timing.audio_duration_ms,
+                "completed_at": result.completed_at.isoformat(),
+            },
+        )
+        connection.tts_terminal.add(request_id)
+        await connection.send_event("tts.state", {"synthesis_request_id": str(request_id), "state": SpeechSynthesisState.COMPLETED.value})
+    except asyncio.CancelledError:
+        return
+    except TextToSpeechServiceFailure as error:
+        if connection.state != ConnectionState.ACTIVE or request_id in connection.tts_terminal:
+            return
+        connection.tts_terminal.add(request_id)
+        if error.code in {SpeechSynthesisError.REQUEST_CANCELED, SpeechSynthesisError.SESSION_INVALIDATED}:
+            await connection.send_event("tts.canceled", {"synthesis_request_id": str(request_id)})
+        else:
+            await _send_tts_error(connection, request_id, error.code)
+    except TimeoutError:
+        if connection.state == ConnectionState.ACTIVE and request_id not in connection.tts_terminal:
+            connection.tts_terminal.add(request_id)
+            await _send_tts_error(connection, request_id, SpeechSynthesisError.PROVIDER_TIMEOUT)
+
+
+async def _send_tts_event(connection: TransportConnection, event_type: str, payload: dict[str, object]) -> None:
+    """Bound direct delivery so a slow connection cannot retain audio indefinitely."""
+
+    async with asyncio.timeout(connection.tts_delivery_timeout_seconds):
+        await connection.send_event(event_type, payload)
+
+
+async def _cancel_tts_request(connection: TransportConnection, payload: dict[str, Any]) -> None:
+    try:
+        event = TtsCancelEvent.model_validate(payload)
+    except ValidationError:
+        await _send_tts_error(connection, None, SpeechSynthesisError.INVALID_AGENT_SOURCE)
+        return
+    request_id = event.synthesis_request_id
+    task = connection.tts_tasks.get(request_id)
+    canceled = await connection.tts_service.cancel(
+        connection.authenticated_context,
+        request_id,
+        connection_id=connection.context.connection_id,
+    )
+    if task is not None:
+        task.cancel()
+        canceled = True
+    if not canceled:
+        await _send_tts_error(connection, None, SpeechSynthesisError.INVALID_AGENT_SOURCE)
+        return
+    if request_id not in connection.tts_terminal:
+        connection.tts_terminal.add(request_id)
+        await connection.send_event("tts.canceled", {"synthesis_request_id": str(request_id)})
+
+
+async def _cancel_active_tts(connection: TransportConnection) -> None:
+    for request_id in tuple(connection.tts_tasks):
+        await _cancel_tts_request(connection, {"synthesis_request_id": request_id})
+
+
+async def _cancel_tts_connection(connection: TransportConnection) -> None:
+    for task in tuple(connection.tts_tasks.values()):
+        task.cancel()
+    await connection.tts_service.cancel_connection(connection.context.connection_id)
+    if connection.tts_tasks:
+        await asyncio.gather(*tuple(connection.tts_tasks.values()), return_exceptions=True)
+
+
+async def _send_tts_error(connection: TransportConnection, request_id: UUID | None, code: SpeechSynthesisError) -> None:
+    payload: dict[str, object] = {"code": code.value, "message": "Speech synthesis could not be completed."}
+    if request_id is not None:
+        payload["synthesis_request_id"] = str(request_id)
+    await connection.send_event("tts.error", payload)

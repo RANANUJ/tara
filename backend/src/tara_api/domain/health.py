@@ -19,6 +19,7 @@ class DependencyName(StrEnum):
     SCHEMA = "schema"
     STT = "stt"
     LLM = "llm"
+    TTS = "tts"
 
 
 class HealthSeverity(StrEnum):
