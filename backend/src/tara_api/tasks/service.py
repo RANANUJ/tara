@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+import json
 from uuid import UUID
 
 from sqlalchemy import select
@@ -34,14 +35,17 @@ class ScheduledTaskService:
         if not title or len(title) > 160 or not instruction or len(instruction) > 1024 or not idempotency_key:
             raise ValueError("invalid_task_input")
         key_hash = sha256(idempotency_key.encode()).hexdigest()
+        payload_hash = sha256(json.dumps({"title": title, "kind": kind.value, "instruction": instruction, "schedule": schedule.run_at.astimezone(UTC).isoformat(), "timezone": schedule.timezone, "interval": schedule.interval_minutes, "count": schedule.occurrence_limit}, sort_keys=True).encode()).hexdigest()
         async with self._database.unit_of_work() as unit:
             session = unit._require_session()  # noqa: SLF001
             existing = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == context.owner.id, ScheduledTaskModel.idempotency_key_hash == key_hash))
             if existing is not None:
+                if existing.schedule.get("idempotency_payload_hash") != payload_hash:
+                    raise ValueError("idempotency_key_payload_mismatch")
                 return self._record(existing)
             model = ScheduledTaskModel(
                 owner_id=context.owner.id, owner_session_id=context.session.id, title=title, task_kind=kind.value,
-                instruction=instruction, schedule={"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit}, timezone=schedule.timezone,
+                instruction=instruction, schedule={"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit, "idempotency_payload_hash": payload_hash}, timezone=schedule.timezone,
                 enabled=True, state=TaskState.ACTIVE.value, next_run_at=schedule.next_after(datetime.now(UTC)), idempotency_key_hash=key_hash,
             )
             session.add(model)
