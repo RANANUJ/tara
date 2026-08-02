@@ -50,14 +50,13 @@ class ScheduledTaskService:
 
     async def list(self, context: AuthenticatedOwnerContext) -> list[ScheduledTask]:
         async with self._database.unit_of_work() as unit:
-            session = unit._require_session()  # noqa: SLF001
-            rows = (await session.scalars(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == context.owner.id).order_by(ScheduledTaskModel.created_at))).all()
+            rows = await unit.scheduled_tasks.list_for_owner(context.owner.id)
             return [self._record(row) for row in rows]
 
     async def pause(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         async with self._database.unit_of_work() as unit:
             session = unit._require_session()  # noqa: SLF001
-            row = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))
+            row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
             if row is None:
                 return False
             row.state, row.enabled, row.next_run_at = TaskState.PAUSED.value, False, None
@@ -65,7 +64,7 @@ class ScheduledTaskService:
 
     async def get(self, context: AuthenticatedOwnerContext, task_id: UUID) -> ScheduledTask | None:
         async with self._database.unit_of_work() as unit:
-            row = await unit._require_session().scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))  # noqa: SLF001,E501
+            row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
             return self._record(row) if row else None
 
     async def resume(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
@@ -82,12 +81,7 @@ class ScheduledTaskService:
 
     async def delete(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         async with self._database.unit_of_work() as unit:
-            session = unit._require_session()  # noqa: SLF001
-            row = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == context.owner.id))
-            if row is None:
-                return False
-            await session.delete(row)
-            return True
+            return await unit.scheduled_tasks.delete_for_owner(task_id, context.owner.id)
 
     async def _set_state(self, context: AuthenticatedOwnerContext, task_id: UUID, state: TaskState, enabled: bool, *, idempotent: bool = False) -> bool:
         async with self._database.unit_of_work() as unit:
