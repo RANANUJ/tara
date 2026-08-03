@@ -25,13 +25,14 @@ from tara_api.domain.protocols import Tool
 from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskState
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
-from tara_api.persistence.models import AuditEventModel, PendingConfirmationModel, ScheduledTaskModel
+from tara_api.persistence.models import AuditEventModel, PendingConfirmationModel, ScheduledTaskModel, ScheduledTaskRunModel
 from tara_api.persistence.repositories.tasks import SqlAlchemyScheduledTaskRepository
 from tara_api.persistence.safety_store import SqlAlchemySafetyStore
 from tara_api.safety.clock import SystemClock
 from tara_api.safety.confirmations import DeterministicConfirmationService
 from tara_api.safety.policy import DeterministicActionPolicyService
 from tara_api.tasks.mapping import CapabilityTaskMapper
+from tara_api.tasks.scheduler import ScheduledTaskScheduler
 from tara_api.tasks.service import ScheduledTask, ScheduledTaskService
 
 
@@ -161,6 +162,55 @@ async def test_typed_registered_capability_creation_persists_safe_metadata(datab
     assert row.next_run_at is not None
     assert not hasattr(row, "target")
     assert not hasattr(row, "parameters")
+
+
+async def test_due_task_is_claimed_once_and_fails_closed_without_private_execution_payload(
+    database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(
+            SqlAlchemySafetyStore(database),
+            SystemClock(),
+            context_validator=authentication,
+        ),
+    )
+    task = await service.create(context, _command())
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    scheduler = ScheduledTaskScheduler(database, registry, poll_seconds=1)
+    assert await scheduler.tick(now) == 1
+    assert await scheduler.tick(now) == 0
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        runs = list(
+            (
+                await database_session.scalars(
+                    select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id)
+                )
+            ).all()
+        )
+    assert row is not None
+    assert row.state == "failed"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.last_outcome == "task_execution_payload_unavailable"
+    assert len(runs) == 1
+    assert runs[0].state == "failed"
+    assert runs[0].error_code == "task_execution_payload_unavailable"
 
 
 async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> None:

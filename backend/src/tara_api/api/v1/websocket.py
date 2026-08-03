@@ -31,7 +31,7 @@ from tara_api.domain.stt import TranscriptionRequest
 from tara_api.stt.service import InMemoryTranscriptionJobs
 from tara_api.agent.registry import AgentRequestHandle
 from tara_api.agent.service import AgentService, AgentServiceFailure
-from tara_api.domain.tts import SpeechSynthesisError, SpeechSynthesisState, SynthesisCommand, SynthesisRequestIdentity
+from tara_api.domain.tts import SpeechLanguage, SpeechSynthesisError, SpeechSynthesisState, SynthesisCommand, SynthesisRequestIdentity
 from tara_api.tts.registry import SynthesisRequestHandle
 from tara_api.tts.service import TextToSpeechService, TextToSpeechServiceFailure
 from tara_api.tts.source import InMemoryApprovedAgentResponseSource
@@ -715,9 +715,7 @@ async def _begin_tts_handoff(connection: TransportConnection, request: AgentRequ
     task.add_done_callback(lambda _task: connection.tts_tasks.pop(identity.synthesis_request_id, None))
 
 
-def _tts_language(language_mode: str):
-    from tara_api.domain.tts import SpeechLanguage
-
+def _tts_language(language_mode: str) -> SpeechLanguage:
     return {"en": SpeechLanguage.ENGLISH, "hi": SpeechLanguage.HINDI, "mixed": SpeechLanguage.MIXED}.get(language_mode, SpeechLanguage.MIXED)
 
 

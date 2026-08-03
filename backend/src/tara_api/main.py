@@ -56,6 +56,7 @@ from tara_api.safety.confirmations import DeterministicConfirmationService
 from tara_api.safety.permissions import DefaultDenyPermissionService
 from tara_api.safety.policy import DeterministicActionPolicyService
 from tara_api.tasks.service import ScheduledTaskService
+from tara_api.tasks.scheduler import ScheduledTaskScheduler
 from tara_api.safety.tool_executor import SafetyToolExecutor
 from tara_api.memory.lifecycle import MemoryLifecycleScheduler, MemoryLifecycleService
 from tara_api.memory.exports import MemoryExportService
@@ -86,10 +87,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await database.start()
     if app.state.settings.memory_scheduler_enabled:
         app.state.memory_lifecycle_scheduler.start()
+    if app.state.settings.scheduler_enabled:
+        app.state.scheduled_task_scheduler.start()
     try:
         yield
     finally:
         app.state.memory_lifecycle_scheduler.shutdown()
+        await app.state.scheduled_task_scheduler.stop()
         await app.state.tts_service.shutdown()
         await app.state.agent_service.shutdown()
         await database.dispose()
@@ -171,6 +175,15 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.capability_registry,
         app.state.action_policy,
         app.state.confirmation_service,
+    )
+    app.state.scheduled_task_scheduler = ScheduledTaskScheduler(
+        app.state.database,
+        app.state.capability_registry,
+        poll_seconds=resolved_settings.scheduler_poll_seconds,
+        due_batch_size=resolved_settings.scheduler_due_batch_size,
+        maximum_concurrency=resolved_settings.scheduler_max_concurrent_runs,
+        maximum_per_owner=resolved_settings.scheduler_max_runs_per_owner,
+        claim_lease_seconds=resolved_settings.scheduler_claim_lease_seconds,
     )
     app.state.fake_consequential_service = FakeConsequentialActionService(
         app.state.confirmation_service,

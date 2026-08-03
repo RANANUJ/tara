@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     memory_semantic_provider: Literal["chromadb", "disabled"] = "disabled"
     memory_chroma_directory: str = "./data/chroma"
     memory_scheduler_enabled: bool = True
+    scheduler_enabled: bool = False
+    scheduler_poll_seconds: float = Field(default=5, ge=0.1, le=300)
+    scheduler_due_batch_size: int = Field(default=8, ge=1, le=64)
+    scheduler_max_concurrent_runs: int = Field(default=2, ge=1, le=8)
+    scheduler_max_runs_per_owner: int = Field(default=1, ge=1, le=8)
+    scheduler_claim_lease_seconds: int = Field(default=60, ge=1, le=300)
     tools_filesystem_read_enabled: bool = False
     tools_filesystem_read_roots: tuple[str, ...] = ()
     fake_consequential_enabled: bool = False
@@ -164,6 +170,8 @@ class Settings(BaseSettings):
             raise ValueError("required wake word cannot be disabled")
         if self.memory_semantic_provider == "chromadb" and not self.memory_chroma_directory.strip():
             raise ValueError("ChromaDB requires an explicit local directory")
+        if self.scheduler_max_runs_per_owner > self.scheduler_max_concurrent_runs:
+            raise ValueError("scheduler owner concurrency cannot exceed global concurrency")
         if self.tools_filesystem_read_enabled and not self.tools_filesystem_read_roots:
             raise ValueError("filesystem read requires at least one allowlisted root")
         if self.environment == "production" and self.fake_consequential_enabled:

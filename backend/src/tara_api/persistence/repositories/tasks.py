@@ -1,12 +1,14 @@
 """Owner-scoped scheduled-task persistence adapter."""
 
-from datetime import datetime
-from uuid import UUID
+from datetime import datetime, timedelta
+from typing import cast
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tara_api.persistence.models import ScheduledTaskModel
+from tara_api.persistence.models import ScheduledTaskModel, ScheduledTaskRunModel
 
 
 class SqlAlchemyScheduledTaskRepository:
@@ -14,7 +16,10 @@ class SqlAlchemyScheduledTaskRepository:
         self._session = session
 
     async def get_for_owner(self, task_id: UUID, owner_id: UUID) -> ScheduledTaskModel | None:
-        return await self._session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == owner_id))
+        return cast(
+            ScheduledTaskModel | None,
+            await self._session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == owner_id)),
+        )
 
     async def list_for_owner(self, owner_id: UUID) -> list[ScheduledTaskModel]:
         return list((await self._session.scalars(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == owner_id).order_by(ScheduledTaskModel.created_at))).all())
@@ -25,12 +30,15 @@ class SqlAlchemyScheduledTaskRepository:
         session_id: UUID,
         idempotency_key_hash: str,
     ) -> ScheduledTaskModel | None:
-        return await self._session.scalar(
-            select(ScheduledTaskModel).where(
-                ScheduledTaskModel.owner_id == owner_id,
-                ScheduledTaskModel.owner_session_id == session_id,
-                ScheduledTaskModel.idempotency_key_hash == idempotency_key_hash,
-            )
+        return cast(
+            ScheduledTaskModel | None,
+            await self._session.scalar(
+                select(ScheduledTaskModel).where(
+                    ScheduledTaskModel.owner_id == owner_id,
+                    ScheduledTaskModel.owner_session_id == session_id,
+                    ScheduledTaskModel.idempotency_key_hash == idempotency_key_hash,
+                )
+            ),
         )
 
     async def add(self, model: ScheduledTaskModel) -> ScheduledTaskModel:
@@ -46,7 +54,12 @@ class SqlAlchemyScheduledTaskRepository:
         return True
 
     async def get_for_confirmation(self, owner_id: UUID, confirmation_id: UUID) -> ScheduledTaskModel | None:
-        return await self._session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == owner_id, ScheduledTaskModel.confirmation_id == confirmation_id))
+        return cast(
+            ScheduledTaskModel | None,
+            await self._session.scalar(
+                select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == owner_id, ScheduledTaskModel.confirmation_id == confirmation_id)
+            ),
+        )
 
     async def attach_confirmation(
         self,
@@ -122,3 +135,84 @@ class SqlAlchemyScheduledTaskRepository:
             .returning(ScheduledTaskModel)
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def claim_due(
+        self,
+        now: datetime,
+        limit: int,
+        lease: timedelta,
+    ) -> list[tuple[ScheduledTaskModel, UUID]]:
+        candidates = list(
+            (
+                await self._session.scalars(
+                    select(ScheduledTaskModel)
+                    .where(
+                        ScheduledTaskModel.state == "active",
+                        ScheduledTaskModel.enabled.is_(True),
+                        ScheduledTaskModel.next_run_at.is_not(None),
+                        ScheduledTaskModel.next_run_at <= now,
+                        (ScheduledTaskModel.claim_id.is_(None))
+                        | (ScheduledTaskModel.claim_expires_at < now),
+                    )
+                    .order_by(ScheduledTaskModel.next_run_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        claimed: list[tuple[ScheduledTaskModel, UUID]] = []
+        for candidate in candidates:
+            run_id = uuid4()
+            statement = (
+                update(ScheduledTaskModel)
+                .where(
+                    ScheduledTaskModel.id == candidate.id,
+                    ScheduledTaskModel.state == "active",
+                    ScheduledTaskModel.enabled.is_(True),
+                    ScheduledTaskModel.next_run_at == candidate.next_run_at,
+                    (ScheduledTaskModel.claim_id.is_(None))
+                    | (ScheduledTaskModel.claim_expires_at < now),
+                )
+                .values(claim_id=run_id, claimed_at=now, claim_expires_at=now + lease)
+                .returning(ScheduledTaskModel)
+            )
+            task = (await self._session.execute(statement)).scalar_one_or_none()
+            if task is None or task.next_run_at is None:
+                continue
+            self._session.add(
+                ScheduledTaskRunModel(
+                    run_id=run_id,
+                    task_id=task.id,
+                    owner_id=task.owner_id,
+                    scheduled_for=task.next_run_at,
+                    claimed_at=now,
+                    state="claimed",
+                )
+            )
+            claimed.append((task, run_id))
+        await self._session.flush()
+        return claimed
+
+    async def fail_claim(self, task_id: UUID, run_id: UUID, now: datetime, error_code: str) -> bool:
+        task_result = await self._session.execute(
+            update(ScheduledTaskModel)
+            .where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.claim_id == run_id)
+            .values(
+                claim_id=None,
+                claimed_at=None,
+                claim_expires_at=None,
+                state="failed",
+                enabled=False,
+                next_run_at=None,
+                last_run_at=now,
+                last_outcome=error_code,
+            )
+        )
+        run_result = await self._session.execute(
+            update(ScheduledTaskRunModel)
+            .where(ScheduledTaskRunModel.task_id == task_id, ScheduledTaskRunModel.run_id == run_id)
+            .values(state="failed", finished_at=now, error_code=error_code)
+        )
+        return bool(
+            cast(CursorResult[object], task_result).rowcount
+            and cast(CursorResult[object], run_result).rowcount
+        )

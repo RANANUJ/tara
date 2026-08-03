@@ -325,6 +325,33 @@ class ScheduledTaskModel(TimestampedModel, Base):
     confirmation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     confirmation_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     confirmation_binding_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ScheduledTaskRunModel(Base):
+    """Content-minimized M16 scheduled-task execution metadata."""
+
+    __tablename__ = "scheduled_task_runs"
+    __table_args__ = (
+        Index("ix_scheduled_task_runs_task_scheduled", "task_id", "scheduled_for"),
+        UniqueConstraint("task_id", "run_id", name="uq_scheduled_task_runs_task_run"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("owners.id", ondelete="CASCADE"), nullable=False)
+    scheduled_for: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class SafeServiceConfigurationModel(TimestampedModel, Base):
