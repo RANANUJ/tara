@@ -6,7 +6,6 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tara_api.persistence.repositories.agent import SqlAlchemyAgentRequestRepository
-from tara_api.persistence.repositories.tasks import SqlAlchemyScheduledTaskRepository
 from tara_api.persistence.repositories.sqlalchemy import (
     SqlAlchemyAuditEventRepository,
     SqlAlchemyConfirmationRepository,
@@ -18,6 +17,7 @@ from tara_api.persistence.repositories.sqlalchemy import (
     SqlAlchemySchedulerJobMetadataRepository,
     SqlAlchemyStructuredMemoryRepository,
 )
+from tara_api.persistence.repositories.tasks import SqlAlchemyScheduledTaskRepository
 
 
 class SqlAlchemyUnitOfWork:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 
-from tara_api.domain.models import ToolRequest
+from tara_api.domain.models import JsonValue, ToolRequest
 from tara_api.domain.protocols import ActionPolicyService, ToolRegistry
 from tara_api.domain.tasks import ScheduledTaskCreateCommand
 
@@ -32,7 +32,7 @@ class CapabilityTaskMapper:
         tool = self._registry.get(command.capability_id)
         if tool is None:
             raise ValueError("unknown_capability")
-        arguments = {"target": command.target, **command.parameters}
+        arguments: dict[str, JsonValue] = {"target": command.target, **command.parameters}
         try:
             tool.validate_arguments(arguments)
         except (TypeError, ValueError):

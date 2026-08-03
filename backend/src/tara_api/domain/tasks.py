@@ -1,10 +1,10 @@
 """Framework-neutral scheduled-task contracts for M16."""
 
-from dataclasses import dataclass
 import json
-from hashlib import sha256
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from hashlib import sha256
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -78,7 +78,16 @@ class ScheduledTaskCreateCommand:
             raise ValueError("invalid_task_input")
 
     def binding_hash(self) -> str:
-        payload = {"capability": self.capability_id, "target": self.target.strip(), "parameters": self.parameters, "instruction": self.instruction.strip(), "run_at": self.schedule.run_at.astimezone(UTC).isoformat(), "timezone": self.schedule.timezone, "interval": self.schedule.interval_minutes, "count": self.schedule.occurrence_limit}
+        payload = {
+            "capability": self.capability_id,
+            "target": self.target.strip(),
+            "parameters": self.parameters,
+            "instruction": self.instruction.strip(),
+            "run_at": self.schedule.run_at.astimezone(UTC).isoformat(),
+            "timezone": self.schedule.timezone,
+            "interval": self.schedule.interval_minutes,
+            "count": self.schedule.occurrence_limit,
+        }
         try:
             encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError) as error:
