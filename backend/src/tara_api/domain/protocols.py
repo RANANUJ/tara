@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from tara_api.domain.auth import AuthenticatedOwnerContext
 from tara_api.domain.models import (
     ActionRiskLevel,
     AuditEvent,
@@ -50,6 +51,17 @@ class ConfirmationService(Protocol):
     async def respond(self, confirmation_id: UUID, response: str) -> ConfirmationAuthorization | None: ...
 
     async def consume(self, authorization: ConfirmationAuthorization, request: ToolRequest) -> bool: ...
+
+
+class AuthenticatedConfirmationService(ConfirmationService, Protocol):
+    """Confirmation port for owner/session-bound application workflows."""
+
+    async def create_authenticated(
+        self,
+        context: AuthenticatedOwnerContext,
+        request: ToolRequest,
+        definition: ToolDefinition,
+    ) -> PendingConfirmation | None: ...
 
 
 class ToolExecutor(Protocol):

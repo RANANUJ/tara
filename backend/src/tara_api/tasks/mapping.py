@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from hashlib import sha256
 
-from tara_api.domain.models import JsonValue, ToolRequest
+from tara_api.domain.models import JsonValue, ToolDefinition, ToolRequest
 from tara_api.domain.protocols import ActionPolicyService, ToolRegistry
 from tara_api.domain.tasks import ScheduledTaskCreateCommand
 
 
 @dataclass(frozen=True, slots=True)
 class MappedTaskCapability:
+    definition: ToolDefinition
     capability_id: str
     risk_level: str
     confirmation_required: bool
@@ -39,13 +41,19 @@ class CapabilityTaskMapper:
             raise ValueError("invalid_capability_arguments") from None
         request = ToolRequest(tool.definition.name, tool.definition.version, arguments)
         risk = self._policy.classify(tool.definition, request)
-        target = command.target.strip()
+        parameter_payload = json.dumps(
+            command.parameters,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         return MappedTaskCapability(
+            tool.definition,
             tool.definition.name,
             risk.value,
             self._policy.requires_confirmation(risk),
-            target[:64],
-            sha256(target.encode()).hexdigest(),
-            sha256(command.binding_hash().encode()).hexdigest(),
+            "configured target",
+            sha256(command.target.strip().encode()).hexdigest(),
+            sha256(parameter_payload.encode()).hexdigest(),
             command.binding_hash(),
         )

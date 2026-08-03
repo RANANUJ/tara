@@ -10,11 +10,16 @@ from uuid import UUID
 from sqlalchemy import select
 
 from tara_api.domain.auth import AuthenticatedOwnerContext
-from tara_api.domain.protocols import ActionPolicyService, ConfirmationService, ToolRegistry
+from tara_api.domain.models import JsonValue, ToolRequest
+from tara_api.domain.protocols import (
+    ActionPolicyService,
+    AuthenticatedConfirmationService,
+    ToolRegistry,
+)
 from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskKind, TaskState
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import ScheduledTaskModel
-from tara_api.tasks.mapping import CapabilityTaskMapper
+from tara_api.tasks.mapping import CapabilityTaskMapper, MappedTaskCapability
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,15 +32,23 @@ class ScheduledTask:
     enabled: bool
     capability_id: str | None = None
     target_summary: str | None = None
+    target_identity_hash: str | None = None
     parameters_hash: str | None = None
     risk_level: str | None = None
     confirmation_id: UUID | None = None
     confirmation_status: str | None = None
+    confirmation_expires_at: datetime | None = None
     confirmation_binding_hash: str | None = None
 
 
 class ScheduledTaskService:
-    def __init__(self, database: Database, capability_registry: ToolRegistry, policy: ActionPolicyService, confirmations: ConfirmationService) -> None:
+    def __init__(
+        self,
+        database: Database,
+        capability_registry: ToolRegistry,
+        policy: ActionPolicyService,
+        confirmations: AuthenticatedConfirmationService,
+    ) -> None:
         self._database = database
         self._capability_registry = capability_registry
         self._policy = policy
@@ -51,6 +64,8 @@ class ScheduledTaskService:
             if existing is not None:
                 if existing.schedule.get("idempotency_payload_hash") != payload_hash:
                     raise ValueError("idempotency_key_payload_mismatch")
+                if mapped.confirmation_required and existing.confirmation_id is None:
+                    raise ValueError("task_confirmation_unavailable")
                 return self._record(existing)
             model = ScheduledTaskModel(
                 owner_id=context.owner.id,
@@ -82,9 +97,35 @@ class ScheduledTaskService:
                 ),
                 idempotency_key_hash=key_hash,
             )
-            session.add(model)
-            await session.flush()
+            await unit.scheduled_tasks.add(model)
+
+        if not mapped.confirmation_required:
             return self._record(model)
+
+        request = self._confirmation_request(model.id, command, mapped)
+        try:
+            confirmation = await self._confirmations.create_authenticated(
+                context,
+                request,
+                mapped.definition,
+            )
+        except Exception as error:
+            raise ValueError("task_confirmation_unavailable") from error
+        if confirmation is None:
+            raise ValueError("task_confirmation_unavailable")
+
+        async with self._database.unit_of_work() as unit:
+            attached = await unit.scheduled_tasks.attach_confirmation(
+                model.id,
+                context.owner.id,
+                confirmation.id,
+                confirmation.status.value,
+                mapped.binding_hash,
+                confirmation.expires_at,
+            )
+        if attached is None:
+            raise ValueError("task_confirmation_unavailable")
+        return self._record(attached)
 
     async def mark_pending_confirmation(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         """M14 approval is required before a consequential task may be scheduled."""
@@ -176,7 +217,42 @@ class ScheduledTaskService:
     def _record(row: ScheduledTaskModel) -> ScheduledTask:
         schedule = ScheduleDefinition(row.timezone, datetime.fromisoformat(str(row.schedule["run_at"])), row.schedule.get("interval_minutes"), row.schedule.get("occurrence_limit"))
         return ScheduledTask(
-            row.id, row.title, TaskKind(row.task_kind), schedule, TaskState(row.state), row.enabled,
-            row.capability_id, row.target_summary, row.parameters_hash, row.risk_level,
-            row.confirmation_id, row.confirmation_status, row.confirmation_binding_hash,
+            id=row.id,
+            title=row.title,
+            kind=TaskKind(row.task_kind),
+            schedule=schedule,
+            state=TaskState(row.state),
+            enabled=row.enabled,
+            capability_id=row.capability_id,
+            target_summary=row.target_summary,
+            target_identity_hash=row.target_identity_hash,
+            parameters_hash=row.parameters_hash,
+            risk_level=row.risk_level,
+            confirmation_id=row.confirmation_id,
+            confirmation_status=row.confirmation_status,
+            confirmation_expires_at=row.confirmation_expires_at,
+            confirmation_binding_hash=row.confirmation_binding_hash,
         )
+
+    @staticmethod
+    def _confirmation_request(
+        task_id: UUID,
+        command: ScheduledTaskCreateCommand,
+        mapped: MappedTaskCapability,
+    ) -> ToolRequest:
+        schedule: dict[str, JsonValue] = {
+            "run_at": command.schedule.run_at.astimezone(UTC).isoformat(),
+            "interval_minutes": command.schedule.interval_minutes,
+            "occurrence_limit": command.schedule.occurrence_limit,
+        }
+        binding: dict[str, JsonValue] = {
+            "task_id": str(task_id),
+            "capability_id": mapped.capability_id,
+            "target_identity_hash": mapped.target_hash,
+            "parameters_hash": mapped.parameters_hash,
+            "instruction_hash": sha256(command.instruction.strip().encode()).hexdigest(),
+            "schedule": schedule,
+            "timezone": command.schedule.timezone,
+            "task_binding_hash": mapped.binding_hash,
+        }
+        return ToolRequest(mapped.definition.name, mapped.definition.version, binding)
