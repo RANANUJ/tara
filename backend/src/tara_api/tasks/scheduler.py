@@ -59,6 +59,7 @@ class ScheduledTaskScheduler:
         self._run_retention = timedelta(days=run_retention_days)
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._last_cleanup_at: datetime | None = None
+        self._last_tick_at: datetime | None = None
         self._global = asyncio.Semaphore(maximum_concurrency)
         self._owner_limits: dict[UUID, tuple[asyncio.Semaphore, int]] = {}
         self._owner_limits_guard = asyncio.Lock()
@@ -80,8 +81,18 @@ class ScheduledTaskScheduler:
                 await asyncio.wait_for(self._loop_task, timeout=self._shutdown_timeout_seconds)
         self._loop_task = None
 
+    def get_status(self) -> dict[str, object]:
+        return {
+            "running": self._loop_task is not None and not self._loop_task.done(),
+            "last_tick_at": self._last_tick_at.isoformat() if self._last_tick_at else None,
+            "last_cleanup_at": self._last_cleanup_at.isoformat() if self._last_cleanup_at else None,
+            "poll_seconds": self._poll_seconds,
+            "maximum_concurrency": self._maximum_concurrency,
+        }
+
     async def tick(self, now: datetime | None = None) -> int:
         claimed_at = now or datetime.now(UTC)
+        self._last_tick_at = claimed_at
         async with self._tick_lock:
             async with self._database.unit_of_work() as unit:
                 dispatch_limit = min(self._due_batch_size, self._maximum_concurrency)

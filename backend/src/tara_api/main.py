@@ -17,6 +17,7 @@ from tara_api.api.v1.confirmations import router as confirmations_router
 from tara_api.api.v1.actions import router as actions_router
 from tara_api.api.v1.health import router as health_router
 from tara_api.api.v1.status import router as status_router
+from tara_api.api.v1.tasks import router as tasks_router
 from tara_api.api.v1.websocket import router as websocket_router
 from tara_api.api.v1.websocket import submit_final_transcript
 from tara_api.agent.context import DatabaseStructuredContextProvider
@@ -383,6 +384,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(actions_router, prefix="/api/v1")
     app.include_router(confirmations_router, prefix="/api/v1")
+    app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(websocket_router, prefix="/api/v1")
     return app

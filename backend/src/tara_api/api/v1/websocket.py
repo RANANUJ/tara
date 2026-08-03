@@ -14,8 +14,13 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
+from sqlalchemy import select
 from tara_api.api.middleware import CORRELATION_HEADER, select_correlation_id
 from tara_api.api.v1.auth import authenticated_context
+from tara_api.api.v1.tasks import ScheduledTaskResponse
+from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, ScheduledTaskUpdateCommand, TaskState
+from tara_api.persistence.models import ScheduledTaskRunModel
+from tara_api.tasks.service import ScheduledTaskService
 from tara_api.auth.service import AuthenticationService
 from tara_api.config.settings import Settings
 from tara_api.domain.audio import AudioFormat
@@ -292,6 +297,8 @@ async def _run_connection(connection: TransportConnection, authentication: Authe
             await _enable_wakeword(connection, event.payload)
         elif event.type == "wakeword.disable":
             await _disable_wakeword(connection, emit_state=True)
+        elif event.type.startswith("task."):
+            await _handle_task_command(connection, event.type, event.payload)
         else:
             await _send_error_and_close(connection, TransportErrorCode.INVALID_EVENT, "Event is not supported.", 1008)
 
@@ -843,3 +850,167 @@ async def _send_tts_error(connection: TransportConnection, request_id: UUID | No
     if request_id is not None:
         payload["synthesis_request_id"] = str(request_id)
     await connection.send_event("tts.error", payload)
+
+
+async def _handle_task_command(connection: TransportConnection, event_type: str, payload: dict[str, Any]) -> None:
+    app = connection._websocket.app
+    service: ScheduledTaskService = app.state.scheduled_task_service
+    context = connection.authenticated_context
+
+    try:
+        if event_type == "task.create":
+            schedule_raw = payload.get("schedule", {})
+            run_at_val = schedule_raw.get("run_at")
+            run_at_dt = datetime.fromisoformat(run_at_val) if isinstance(run_at_val, str) else run_at_val
+            if run_at_dt.tzinfo is None:
+                run_at_dt = run_at_dt.replace(tzinfo=UTC)
+            schedule = ScheduleDefinition(
+                timezone=schedule_raw.get("timezone", "UTC"),
+                run_at=run_at_dt,
+                interval_minutes=schedule_raw.get("interval_minutes"),
+                occurrence_limit=schedule_raw.get("occurrence_limit"),
+            )
+            cmd = ScheduledTaskCreateCommand(
+                title=payload["title"],
+                instruction=payload["instruction"],
+                capability_id=payload["capability_id"],
+                target=payload["target"],
+                parameters=payload.get("parameters", {}),
+                schedule=schedule,
+                idempotency_key=payload["idempotency_key"],
+            )
+            task = await service.create(context, cmd)
+            resp = ScheduledTaskResponse.from_domain(task).model_dump(mode="json")
+            if task.state == TaskState.PENDING_CONFIRMATION:
+                await connection.send_event("task.pending_confirmation", resp)
+            else:
+                await connection.send_event("task.created", resp)
+
+        elif event_type == "task.list":
+            tasks = await service.list(context)
+            items = [ScheduledTaskResponse.from_domain(t).model_dump(mode="json") for t in tasks]
+            await connection.send_event("task.tasks", {"tasks": items})
+
+        elif event_type == "task.get":
+            task_id = UUID(payload["task_id"])
+            fetched_task = await service.get(context, task_id)
+            if fetched_task is None:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.detail", ScheduledTaskResponse.from_domain(fetched_task).model_dump(mode="json"))
+
+        elif event_type == "task.update":
+            task_id = UUID(payload["task_id"])
+            schedule_def = None
+            if "schedule" in payload and payload["schedule"] is not None:
+                s_raw = payload["schedule"]
+                s_run_at = s_raw.get("run_at")
+                s_dt = datetime.fromisoformat(s_run_at) if isinstance(s_run_at, str) else s_run_at
+                if s_dt.tzinfo is None:
+                    s_dt = s_dt.replace(tzinfo=UTC)
+                schedule_def = ScheduleDefinition(
+                    timezone=s_raw.get("timezone", "UTC"),
+                    run_at=s_dt,
+                    interval_minutes=s_raw.get("interval_minutes"),
+                    occurrence_limit=s_raw.get("occurrence_limit"),
+                )
+            cmd_update = ScheduledTaskUpdateCommand(
+                title=payload.get("title"),
+                instruction=payload.get("instruction"),
+                capability_id=payload.get("capability_id"),
+                target=payload.get("target"),
+                parameters=payload.get("parameters"),
+                schedule=schedule_def,
+            )
+            updated = await service.update(context, task_id, cmd_update)
+            if updated is None:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.updated", ScheduledTaskResponse.from_domain(updated).model_dump(mode="json"))
+
+        elif event_type == "task.pause":
+            task_id = UUID(payload["task_id"])
+            ok = await service.pause(context, task_id)
+            if not ok:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.paused", {"task_id": str(task_id)})
+
+        elif event_type in {"task.resume", "task.enable"}:
+            task_id = UUID(payload["task_id"])
+            ok = await service.resume(context, task_id)
+            if not ok:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.resumed", {"task_id": str(task_id)})
+
+        elif event_type == "task.disable":
+            task_id = UUID(payload["task_id"])
+            ok = await service.disable(context, task_id)
+            if not ok:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.disabled", {"task_id": str(task_id)})
+
+        elif event_type == "task.cancel":
+            task_id = UUID(payload["task_id"])
+            ok = await service.cancel(context, task_id)
+            if not ok:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.canceled", {"task_id": str(task_id)})
+
+        elif event_type == "task.delete":
+            task_id = UUID(payload["task_id"])
+            ok = await service.delete(context, task_id)
+            if not ok:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.deleted", {"task_id": str(task_id)})
+
+        elif event_type == "task.confirm":
+            task_id = UUID(payload["task_id"])
+            resp_str = payload.get("response", "yes")
+            approved = await service.approve_confirmation(context, task_id, resp_str)
+            if approved is None:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                await connection.send_event("task.confirmed", ScheduledTaskResponse.from_domain(approved).model_dump(mode="json"))
+
+        elif event_type == "task.runs.list":
+            task_id = UUID(payload["task_id"])
+            existing_task = await service.get(context, task_id)
+            if existing_task is None:
+                await connection.send_event("task.error", {"code": "task_not_found", "message": "Task not found"})
+            else:
+                async with app.state.database.session() as database_session:
+                    runs = list(
+                        (
+                            await database_session.scalars(
+                                select(ScheduledTaskRunModel)
+                                .where(
+                                    ScheduledTaskRunModel.task_id == task_id,
+                                    ScheduledTaskRunModel.owner_id == context.owner.id,
+                                )
+                                .order_by(ScheduledTaskRunModel.claimed_at.desc())
+                            )
+                        ).all()
+                    )
+                run_items = [
+                    {
+                        "id": str(r.id),
+                        "run_id": str(r.run_id),
+                        "task_id": str(r.task_id),
+                        "scheduled_for": r.scheduled_for.isoformat(),
+                        "claimed_at": r.claimed_at.isoformat(),
+                        "started_at": r.started_at.isoformat() if r.started_at else None,
+                        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                        "state": r.state,
+                        "outcome_code": r.outcome_code,
+                        "error_code": r.error_code,
+                    }
+                    for r in runs
+                ]
+                await connection.send_event("task.runs", {"task_id": str(task_id), "runs": run_items})
+    except Exception as exc:
+        await connection.send_event("task.error", {"code": "invalid_command", "message": str(exc)})

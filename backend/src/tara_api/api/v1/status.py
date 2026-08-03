@@ -36,6 +36,7 @@ class StatusResponse(BaseModel):
     agent: dict[str, object]
     tts: dict[str, object]
     wakeword: dict[str, object]
+    tasks: dict[str, object]
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -135,4 +136,5 @@ async def service_status(
             "wakeword_active_connections": wakeword_active_connections,
             "wakeword_max_buffered_frames": request.app.state.settings.wakeword_maximum_buffered_frames,
         },
+        tasks=request.app.state.scheduled_task_scheduler.get_status() if hasattr(request.app.state, "scheduled_task_scheduler") else {},
     )
