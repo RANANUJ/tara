@@ -87,6 +87,14 @@ class SqlAlchemyScheduledTaskRepository:
         )
         return bool(cast(CursorResult[object], result).rowcount)
 
+    async def replace_payload(self, task_id: UUID, owner_id: UUID, *, capability_id: str, binding_hash: str, payload_version: int, key_version: str, nonce: bytes, ciphertext: bytes, now: datetime) -> bool:
+        result = await self._session.execute(
+            update(TaskExecutionPayloadModel)
+            .where(TaskExecutionPayloadModel.task_id == task_id, TaskExecutionPayloadModel.owner_id == owner_id, TaskExecutionPayloadModel.revoked_at.is_(None))
+            .values(capability_id=capability_id, binding_hash=binding_hash, payload_version=payload_version, key_version=key_version, nonce=nonce, ciphertext=ciphertext, created_at=now)
+        )
+        return bool(cast(CursorResult[object], result).rowcount)
+
     async def delete_payload(self, task_id: UUID, owner_id: UUID) -> bool:
         payload = await self.get_payload(task_id, owner_id)
         if payload is None:

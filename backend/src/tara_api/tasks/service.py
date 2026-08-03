@@ -18,7 +18,7 @@ from tara_api.domain.protocols import (
     AuthenticatedConfirmationService,
     ToolRegistry,
 )
-from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskKind, TaskState
+from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, ScheduledTaskUpdateCommand, TaskKind, TaskState
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import ScheduledTaskModel, TaskExecutionPayloadModel
 from tara_api.tasks.mapping import CapabilityTaskMapper, MappedTaskCapability
@@ -299,38 +299,50 @@ class ScheduledTaskService:
             row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
             return self._record(row) if row else None
 
-    async def update(self, context: AuthenticatedOwnerContext, task_id: UUID, values: dict[str, object]) -> ScheduledTask | None:
-        allowed = {"title", "instruction", "schedule"}
-        if not values or set(values) - allowed:
-            raise ValueError("invalid_task_update")
+    async def update(self, context: AuthenticatedOwnerContext, task_id: UUID, command: ScheduledTaskUpdateCommand) -> ScheduledTask | None:
         async with self._database.unit_of_work() as unit:
             row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
             if row is None:
                 return None
-            if row.state in {TaskState.CANCELED.value, TaskState.COMPLETED.value, TaskState.FAILED.value}:
+            if row.state in {TaskState.CANCELED.value, TaskState.COMPLETED.value, TaskState.FAILED.value} or row.claim_id is not None:
                 raise ValueError("task_not_mutable")
-            if "title" in values:
-                title = values["title"]
-                if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
-                    raise ValueError("invalid_task_update")
-                row.title = title.strip()
-            if "instruction" in values:
-                instruction = values["instruction"]
-                if not isinstance(instruction, str) or not 1 <= len(instruction.strip()) <= 1024:
-                    raise ValueError("invalid_task_update")
-                row.instruction = instruction.strip()
-            if "schedule" in values:
-                schedule = values["schedule"]
-                if not isinstance(schedule, ScheduleDefinition):
-                    raise ValueError("invalid_task_update")
-                row.schedule = {"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit}
-                row.timezone = schedule.timezone
-                row.next_run_at = schedule.next_after(datetime.now(UTC)) if row.enabled else None
-            if row.confirmation_id is not None and {"instruction", "schedule"} & set(values):
-                invalidated = await unit.scheduled_tasks.invalidate_confirmation(task_id, context.owner.id)
-                if invalidated is None:
-                    return None
-                row = invalidated
+            schedule = command.schedule or self._schedule_from_row(row)
+            payload = await unit.scheduled_tasks.get_active_payload(task_id, context.owner.id, datetime.now(UTC))
+            if payload is None:
+                raise ValueError("task_payload_unavailable")
+            target, parameters = self._payload_protector.reveal(
+                task_id=task_id, owner_id=context.owner.id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
+                payload_version=payload.payload_version, nonce=payload.nonce, ciphertext=payload.ciphertext,
+            )
+            if command.target is not None:
+                target = command.target
+            if command.parameters is not None:
+                parameters = command.parameters
+            capability_id = command.capability_id or row.capability_id
+            if capability_id is None:
+                raise ValueError("task_update_requires_execution_inputs")
+            create_command = ScheduledTaskCreateCommand(command.title or row.title, command.instruction or row.instruction, capability_id, target, parameters, schedule, "update")
+            mapped = CapabilityTaskMapper(self._capability_registry, self._policy).map(create_command)
+            protected = self._payload_protector.protect(task_id=task_id, owner_id=context.owner.id, capability_id=mapped.capability_id, binding_hash=mapped.binding_hash, target=target, parameters=parameters)
+            if not await unit.scheduled_tasks.replace_payload(
+                task_id, context.owner.id, capability_id=mapped.capability_id, binding_hash=mapped.binding_hash,
+                payload_version=protected.payload_version, key_version=protected.key_version, nonce=protected.nonce,
+                ciphertext=protected.ciphertext, now=datetime.now(UTC),
+            ):
+                raise ValueError("task_payload_unavailable")
+            row.title, row.instruction = create_command.title.strip(), create_command.instruction.strip()
+            row.schedule = {
+                "run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes,
+                "occurrence_limit": schedule.occurrence_limit, "idempotency_payload_hash": row.schedule.get("idempotency_payload_hash"),
+            }
+            row.timezone, row.capability_id, row.target_summary = schedule.timezone, mapped.capability_id, mapped.target_summary
+            row.target_identity_hash, row.parameters_hash, row.confirmation_binding_hash, row.risk_level = mapped.target_hash, mapped.parameters_hash, mapped.binding_hash, mapped.risk_level
+            if mapped.confirmation_required:
+                row = await unit.scheduled_tasks.invalidate_confirmation(task_id, context.owner.id) or row
+                row.confirmation_binding_hash = mapped.binding_hash
+            else:
+                row.confirmation_id, row.confirmation_status, row.confirmation_expires_at = None, None, None
+                row.state, row.enabled, row.next_run_at = TaskState.ACTIVE.value, True, schedule.next_after(datetime.now(UTC))
             return self._record(row)
 
     async def resume(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:

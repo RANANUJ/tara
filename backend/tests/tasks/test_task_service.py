@@ -22,7 +22,7 @@ from tara_api.domain.models import (
     ToolResultStatus,
 )
 from tara_api.domain.protocols import Tool
-from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskState
+from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, ScheduledTaskUpdateCommand, TaskState
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import AuditEventModel, PendingConfirmationModel, ScheduledTaskModel, ScheduledTaskRunModel
@@ -613,7 +613,7 @@ async def test_bound_field_update_invalidates_attached_confirmation(
         ),
     )
 
-    updated = await service.update(context, task.id, {"instruction": "Changed private instruction"})
+    updated = await service.update(context, task.id, ScheduledTaskUpdateCommand(instruction="Changed private instruction"))
 
     assert updated is not None
     assert updated.state is TaskState.PENDING_CONFIRMATION

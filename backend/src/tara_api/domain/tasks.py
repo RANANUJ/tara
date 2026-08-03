@@ -93,3 +93,25 @@ class ScheduledTaskCreateCommand:
         except (TypeError, ValueError) as error:
             raise ValueError("invalid_task_parameters") from error
         return sha256(encoded.encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledTaskUpdateCommand:
+    title: str | None = None
+    instruction: str | None = None
+    schedule: ScheduleDefinition | None = None
+    capability_id: str | None = None
+    target: str | None = None
+    parameters: dict[str, str | int | bool | None] | None = None
+
+    def __post_init__(self) -> None:
+        if not any(value is not None for value in (self.title, self.instruction, self.schedule, self.capability_id, self.target, self.parameters)):
+            raise ValueError("invalid_task_update")
+        if self.title is not None and not 1 <= len(self.title.strip()) <= 160:
+            raise ValueError("invalid_task_update")
+        if self.instruction is not None and not 1 <= len(self.instruction.strip()) <= 1024:
+            raise ValueError("invalid_task_update")
+        if self.capability_id is not None and (not self.capability_id.replace(".", "").replace("_", "").isalnum() or len(self.capability_id) > 128):
+            raise ValueError("invalid_task_update")
+        if (self.capability_id is not None or self.target is not None or self.parameters is not None) and (self.target is None or self.parameters is None):
+            raise ValueError("task_update_requires_execution_inputs")
