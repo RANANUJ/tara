@@ -78,6 +78,7 @@ class ScheduledTaskScheduler:
     async def tick(self, now: datetime | None = None) -> int:
         claimed_at = now or datetime.now(UTC)
         async with self._database.unit_of_work() as unit:
+            await unit.scheduled_tasks.recover_stale_claims(claimed_at, self._due_batch_size)
             claimed = await unit.scheduled_tasks.claim_due(claimed_at, self._due_batch_size, self._lease)
         await asyncio.gather(*(self._process(task, run_id, claimed_at) for task, run_id in claimed))
         return len(claimed)
@@ -95,6 +96,11 @@ class ScheduledTaskScheduler:
         current = now or datetime.now(UTC)
         async with self._database.unit_of_work() as unit:
             payloads = await unit.scheduled_tasks.cleanup_payloads(current - self._payload_retention, self._cleanup_batch_size)
+            if payloads < self._cleanup_batch_size:
+                payloads += await unit.scheduled_tasks.cleanup_completed_payloads(
+                    current - self._payload_retention,
+                    self._cleanup_batch_size - payloads,
+                )
             runs = await unit.scheduled_tasks.cleanup_runs(current - self._run_retention, self._cleanup_batch_size)
         self._last_cleanup_at = current
         return payloads, runs

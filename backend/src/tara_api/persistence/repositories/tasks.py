@@ -133,6 +133,59 @@ class SqlAlchemyScheduledTaskRepository:
         result = await self._session.execute(delete(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.id.in_(candidates)))
         return int(cast(CursorResult[object], result).rowcount)
 
+    async def cleanup_completed_payloads(self, cutoff: datetime, limit: int) -> int:
+        candidates = list(
+            (
+                await self._session.scalars(
+                    select(TaskExecutionPayloadModel.id)
+                    .join(ScheduledTaskModel, ScheduledTaskModel.id == TaskExecutionPayloadModel.task_id)
+                    .where(
+                        ScheduledTaskModel.state == "completed",
+                        ScheduledTaskModel.last_run_at.is_not(None),
+                        ScheduledTaskModel.last_run_at <= cutoff,
+                    )
+                    .order_by(ScheduledTaskModel.last_run_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        if not candidates:
+            return 0
+        result = await self._session.execute(delete(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.id.in_(candidates)))
+        return int(cast(CursorResult[object], result).rowcount)
+
+    async def recover_stale_claims(self, now: datetime, limit: int) -> int:
+        stale = list(
+            (
+                await self._session.scalars(
+                    select(ScheduledTaskModel)
+                    .where(
+                        ScheduledTaskModel.state == "active",
+                        ScheduledTaskModel.enabled.is_(True),
+                        ScheduledTaskModel.claim_id.is_not(None),
+                        ScheduledTaskModel.claim_expires_at <= now,
+                    )
+                    .order_by(ScheduledTaskModel.claim_expires_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        for task in stale:
+            if task.claim_id is None:
+                continue
+            await self._session.execute(
+                update(ScheduledTaskRunModel)
+                .where(
+                    ScheduledTaskRunModel.task_id == task.id,
+                    ScheduledTaskRunModel.run_id == task.claim_id,
+                    ScheduledTaskRunModel.state.in_(("claimed", "running")),
+                )
+                .values(state="failed", finished_at=now, error_code="task_claim_lease_expired")
+            )
+            task.claim_id, task.claimed_at, task.claim_expires_at = None, None, None
+        await self._session.flush()
+        return len(stale)
+
     async def cleanup_runs(self, cutoff: datetime, limit: int) -> int:
         candidates = list(
             (
