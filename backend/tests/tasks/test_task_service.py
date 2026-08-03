@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
@@ -11,7 +12,7 @@ from tara_api.auth.security import Argon2idPasswordHasher, SecureSessionTokenGen
 from tara_api.auth.service import AuthenticationService
 from tara_api.capabilities.filesystem import AllowlistedFilesystemListTool
 from tara_api.capabilities.registry import CapabilityRegistry
-from tara_api.domain.auth import AuthenticatedOwnerContext
+from tara_api.domain.auth import AuthenticatedOwnerContext, Owner, OwnerSession
 from tara_api.domain.models import (
     ActionRiskLevel,
     JsonValue,
@@ -25,7 +26,7 @@ from tara_api.domain.protocols import Tool
 from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, ScheduledTaskUpdateCommand, TaskState
 from tara_api.persistence.auth_store import SqlAlchemyAuthenticationStore
 from tara_api.persistence.database import Database
-from tara_api.persistence.models import AuditEventModel, PendingConfirmationModel, ScheduledTaskModel, ScheduledTaskRunModel
+from tara_api.persistence.models import AuditEventModel, PendingConfirmationModel, ScheduledTaskModel, ScheduledTaskRunModel, TaskExecutionPayloadModel
 from tara_api.persistence.repositories.tasks import SqlAlchemyScheduledTaskRepository
 from tara_api.persistence.safety_store import SqlAlchemySafetyStore
 from tara_api.safety.clock import SystemClock
@@ -284,6 +285,38 @@ async def test_scheduler_releases_unused_owner_limiter_entry(database, tmp_path:
     assert context.owner.id in scheduler._owner_limits  # noqa: SLF001
     await scheduler._release_owner_limit(context.owner.id, limiter)  # noqa: SLF001
     assert context.owner.id not in scheduler._owner_limits  # noqa: SLF001
+
+
+async def test_cancellation_before_poll_prevents_claim_and_revokes_payload(database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(context, _command(idempotency_key="cancel-before-poll"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    assert await service.cancel(context, task.id)
+    executor = _CountingSchedulerExecutor()
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+    assert await scheduler.tick(now) == 0
+    assert executor.invocations == 0
+    async with database.session() as database_session:
+        payload = await database_session.scalar(select(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.task_id == task.id))
+        run_count = await database_session.scalar(select(func.count()).select_from(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id))
+    assert payload is not None and payload.revoked_at is not None
+    assert run_count == 0
 
 
 async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> None:
@@ -681,3 +714,653 @@ async def test_bound_field_update_invalidates_attached_confirmation(
     assert updated.confirmation_expires_at is None
     with pytest.raises(ValueError, match="task_confirmation_missing"):
         await service.approve_confirmation(context, task.id, "yes")
+
+
+async def test_cancellation_after_claim_but_before_execution(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(
+        context,
+        _command(
+            capability_id="filesystem.list",
+            instruction="Recurring test",
+            parameters={"target": "."},
+            idempotency_key="cancel-after-claim",
+        ),
+    )
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    async with database.unit_of_work() as unit:
+        claimed = await unit.scheduled_tasks.claim_due(now, 1, timedelta(seconds=60))
+        assert len(claimed) == 1
+        assert claimed[0][0].id == task.id
+
+    assert await service.cancel(context, task.id) is True
+
+    executor = _CountingSchedulerExecutor()
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+    assert await scheduler.tick(now) == 0
+    assert executor.invocations == 0
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        run = await database_session.scalar(select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id))
+        payload = await database_session.scalar(select(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.task_id == task.id))
+    assert row is not None
+    assert row.state == "canceled"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.next_run_at is None
+    assert run is not None and run.state == "canceled" and run.error_code == "task_canceled"
+    assert payload is not None and payload.revoked_at is not None
+
+
+async def test_cancellation_while_capability_execution_is_blocked(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _BlockingExecutor:
+        def __init__(self) -> None:
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+            self.invocations = 0
+
+        async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            self.invocations += 1
+            self.started_event.set()
+            await self.release_event.wait()
+            return ToolResult(ToolResultStatus.SUCCEEDED, "unblocked success")
+
+    tool = AllowlistedFilesystemListTool((root,))
+    registry = CapabilityRegistry(tool)
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(context, _command(idempotency_key="cancel-while-blocked"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    executor = _BlockingExecutor()
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+
+    tick_task = asyncio.create_task(scheduler.tick(now))
+    await executor.started_event.wait()
+    assert executor.invocations == 1
+
+    assert await service.cancel(context, task.id) is True
+
+    executor.release_event.set()
+    await tick_task
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        run = await database_session.scalar(select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id))
+        payload = await database_session.scalar(select(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.task_id == task.id))
+    assert row is not None
+    assert row.state == "canceled"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.next_run_at is None
+    assert run is not None and run.state == "canceled" and run.error_code == "task_canceled"
+    assert payload is not None and payload.revoked_at is not None
+
+
+async def test_repeated_cancellation_is_idempotent(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication)
+    task = await service.create(context, _command(idempotency_key="repeated-cancel"))
+
+    assert await service.cancel(context, task.id) is True
+    assert await service.cancel(context, task.id) is True
+    assert await service.cancel(context, task.id) is True
+
+    current = await service.get(context, task.id)
+    assert current is not None
+    assert current.state is TaskState.CANCELED
+    assert current.enabled is False
+    async with database.session() as database_session:
+        payload = await database_session.scalar(select(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.task_id == task.id))
+    assert payload is not None and payload.revoked_at is not None
+
+
+async def test_foreign_owner_cancellation_rejected(database: Database, tmp_path: Path) -> None:
+    context1, authentication = await _authenticated_context(database, "owner1@example.test")
+    now = datetime.now(UTC)
+    foreign_owner = Owner(id=uuid4(), email="foreign@example.test", created_at=now)
+    foreign_session = OwnerSession(id=uuid4(), owner_id=foreign_owner.id, issued_at=now, expires_at=now + timedelta(hours=1), last_used_at=now, revoked_at=None, client_label=None)
+    context2 = AuthenticatedOwnerContext(foreign_owner, foreign_session)
+
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication)
+    task = await service.create(context1, _command(idempotency_key="foreign-cancel"))
+
+    assert await service.cancel(context2, task.id) is False
+
+    current = await service.get(context1, task.id)
+    assert current is not None
+    assert current.state is TaskState.ACTIVE
+    assert current.enabled is True
+    async with database.session() as database_session:
+        payload = await database_session.scalar(select(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.task_id == task.id))
+    assert payload is not None and payload.revoked_at is None
+
+
+async def test_timeout_creates_exactly_one_timed_out_terminal_outcome(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _HangingExecutor:
+        def __init__(self) -> None:
+            self.release_event = asyncio.Event()
+
+        async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            await self.release_event.wait()
+            return ToolResult(ToolResultStatus.SUCCEEDED, "eventually done")
+
+    executor = _HangingExecutor()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(context, _command(idempotency_key="timeout-single-outcome"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    scheduler = ScheduledTaskScheduler(
+        database,
+        registry,
+        executor,
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        run_timeout_seconds=1,
+    )
+    scheduler._run_timeout_seconds = 0.05
+
+    assert await scheduler.tick(now) == 1
+    executor.release_event.set()
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        runs = list(
+            (
+                await database_session.scalars(
+                    select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id)
+                )
+            ).all()
+        )
+    assert row is not None
+    assert row.state == "failed"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.next_run_at is None
+    assert row.last_outcome == "task_execution_timed_out"
+    assert len(runs) == 1
+    assert runs[0].state == "failed"
+    assert runs[0].error_code == "task_execution_timed_out"
+
+
+async def test_late_completion_after_timeout_cannot_overwrite_state(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _ControllableExecutor:
+        def __init__(self) -> None:
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+
+        async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            self.started_event.set()
+            await self.release_event.wait()
+            return ToolResult(ToolResultStatus.SUCCEEDED, "late success")
+
+    executor = _ControllableExecutor()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(context, _command(idempotency_key="late-after-timeout"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    scheduler = ScheduledTaskScheduler(
+        database,
+        registry,
+        executor,
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        run_timeout_seconds=1,
+    )
+    scheduler._run_timeout_seconds = 0.05
+
+    tick_task = asyncio.create_task(scheduler.tick(now))
+    await executor.started_event.wait()
+    await tick_task
+
+    executor.release_event.set()
+    await asyncio.sleep(0.01)
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        runs = list(
+            (
+                await database_session.scalars(
+                    select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id)
+                )
+            ).all()
+        )
+    assert row is not None
+    assert row.state == "failed"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.next_run_at is None
+    assert row.last_outcome == "task_execution_timed_out"
+    assert len(runs) == 1
+    assert runs[0].state == "failed"
+    assert runs[0].error_code == "task_execution_timed_out"
+
+
+async def test_late_completion_after_cancellation_cannot_overwrite_state(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _ControllableExecutor:
+        def __init__(self) -> None:
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+
+        async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            self.started_event.set()
+            await self.release_event.wait()
+            return ToolResult(ToolResultStatus.SUCCEEDED, "late success after cancel")
+
+    executor = _ControllableExecutor()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    task = await service.create(context, _command(idempotency_key="late-after-cancel"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    scheduler = ScheduledTaskScheduler(
+        database,
+        registry,
+        executor,
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    tick_task = asyncio.create_task(scheduler.tick(now))
+    await executor.started_event.wait()
+
+    assert await service.cancel(context, task.id) is True
+
+    executor.release_event.set()
+    await tick_task
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        runs = list(
+            (
+                await database_session.scalars(
+                    select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task.id)
+                )
+            ).all()
+        )
+    assert row is not None
+    assert row.state == "canceled"
+    assert row.enabled is False
+    assert row.claim_id is None
+    assert row.next_run_at is None
+    assert len(runs) == 1
+    assert runs[0].state == "canceled"
+    assert runs[0].error_code == "task_canceled"
+
+
+async def test_limiter_released_after_timeout_and_cancellation(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _ControllableExecutor:
+        def __init__(self) -> None:
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+
+        async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            self.started_event.set()
+            await self.release_event.wait()
+            return ToolResult(ToolResultStatus.SUCCEEDED, "done")
+
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    executor1 = _ControllableExecutor()
+    scheduler1 = ScheduledTaskScheduler(
+        database, registry, executor1, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        maximum_concurrency=2, maximum_per_owner=1,
+    )
+    task1 = await service.create(context, _command(idempotency_key="limiter-cancel"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task1.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    tick_task1 = asyncio.create_task(scheduler1.tick(now))
+    await executor1.started_event.wait()
+    await service.cancel(context, task1.id)
+    executor1.release_event.set()
+    await tick_task1
+
+    assert scheduler1._global._value == 2  # noqa: SLF001
+    assert context.owner.id not in scheduler1._owner_limits  # noqa: SLF001
+
+    executor2 = _ControllableExecutor()
+    scheduler2 = ScheduledTaskScheduler(
+        database, registry, executor2, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        maximum_concurrency=2, maximum_per_owner=1, run_timeout_seconds=1,
+    )
+    scheduler2._run_timeout_seconds = 0.05
+
+    task2 = await service.create(context, _command(idempotency_key="limiter-timeout"))
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task2.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    tick_task2 = asyncio.create_task(scheduler2.tick(now))
+    await executor2.started_event.wait()
+    await tick_task2
+    executor2.release_event.set()
+
+    assert scheduler2._global._value == 2  # noqa: SLF001
+    assert context.owner.id not in scheduler2._owner_limits  # noqa: SLF001
+
+
+async def test_payload_revoked_or_replaced_while_claimed_prevents_execution(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    task_a = await service.create(context, _command(idempotency_key="payload-revoked-claimed"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_a.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    async with database.unit_of_work() as unit:
+        claimed = await unit.scheduled_tasks.claim_due(now, 1, timedelta(seconds=60))
+        assert len(claimed) == 1
+        await unit.scheduled_tasks.revoke_payload(task_a.id, context.owner.id, now)
+
+    executor = _CountingSchedulerExecutor()
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+
+    await scheduler._process(claimed[0][0], claimed[0][1], now)  # noqa: SLF001
+    assert executor.invocations == 0
+
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_a.id))
+    assert row is not None and row.state == "failed" and row.last_outcome == "task_payload_unavailable"
+
+    task_b = await service.create(context, _command(idempotency_key="payload-replaced-claimed"))
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_b.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    async with database.unit_of_work() as unit:
+        claimed_b = await unit.scheduled_tasks.claim_due(now, 1, timedelta(seconds=60))
+        assert len(claimed_b) == 1
+        await unit.scheduled_tasks.replace_payload(
+            task_b.id, context.owner.id, capability_id="filesystem.list", binding_hash="mismatched_binding_hash",
+            payload_version=1, key_version="1", nonce=b"0" * 12, ciphertext=b"fake", now=now,
+        )
+
+    await scheduler._process(claimed_b[0][0], claimed_b[0][1], now)  # noqa: SLF001
+    assert executor.invocations == 0
+
+    async with database.session() as database_session:
+        row_b = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_b.id))
+    assert row_b is not None and row_b.state == "failed" and row_b.last_outcome == "task_payload_unavailable"
+
+
+async def test_pre_execution_invalidation_prevents_capability_invocation(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    now = datetime.now(UTC)
+
+    cases = [
+        ("pause", lambda s, t: s.pause(context, t.id)),
+        ("disable", lambda s, t: s.disable(context, t.id)),
+        ("delete", lambda s, t: s.delete(context, t.id)),
+    ]
+
+    for key, mutate in cases:
+        task = await service.create(context, _command(idempotency_key=f"pre-exec-{key}"))
+        async with database.session() as database_session:
+            row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+            assert row is not None
+            row.next_run_at = now - timedelta(seconds=1)
+            await database_session.commit()
+
+        async with database.unit_of_work() as unit:
+            claimed = await unit.scheduled_tasks.claim_due(now, 1, timedelta(seconds=60))
+            assert len(claimed) == 1
+
+        await mutate(service, task)
+
+        executor = _CountingSchedulerExecutor()
+        scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+        await scheduler._process(claimed[0][0], claimed[0][1], now)  # noqa: SLF001
+        assert executor.invocations == 0, f"executor invoked for {key}"
+
+    task_binding = await service.create(context, _command(idempotency_key="pre-exec-binding-mismatch"))
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_binding.id))
+        assert row is not None
+        row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    async with database.unit_of_work() as unit:
+        claimed_binding = await unit.scheduled_tasks.claim_due(now, 1, timedelta(seconds=60))
+        assert len(claimed_binding) == 1
+        row_claimed = await unit.scheduled_tasks.get_for_owner(task_binding.id, context.owner.id)
+        assert row_claimed is not None
+        row_claimed.confirmation_binding_hash = "changed_binding_hash"
+
+    executor = _CountingSchedulerExecutor()
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+    await scheduler._process(claimed_binding[0][0], claimed_binding[0][1], now)  # noqa: SLF001
+    assert executor.invocations == 0
+
+
+async def test_recurring_next_run_at_not_written_after_invalidation_or_cancellation(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    actions = [
+        ("cancel", lambda s, t: s.cancel(context, t.id)),
+        ("pause", lambda s, t: s.pause(context, t.id)),
+        ("disable", lambda s, t: s.disable(context, t.id)),
+        ("delete", lambda s, t: s.delete(context, t.id)),
+    ]
+
+    for idx, (name, action) in enumerate(actions):
+        cmd = ScheduledTaskCreateCommand(
+            "Recurring",
+            "List files",
+            "filesystem.list",
+            ".",
+            {},
+            ScheduleDefinition("UTC", datetime(2027, 1, 1, tzinfo=UTC), interval_minutes=60),
+            f"recurring-{name}-{idx}",
+        )
+        task = await service.create(context, cmd)
+        await action(service, task)
+        current = await service.get(context, task.id)
+        if name == "delete":
+            assert current is None
+        else:
+            assert current is not None
+            async with database.session() as database_session:
+                row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+            assert row is not None
+            assert row.next_run_at is None
+
+
+async def test_scheduler_remains_usable_after_timeout_or_cancellation(database: Database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    class _FailingFirstThenSuccessExecutor:
+        def __init__(self) -> None:
+            self.invocations: list[str] = []
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+
+        async def execute(self, request: ToolRequest, authorization: object | None = None) -> ToolResult:
+            self.invocations.append(request.tool_name)
+            if len(self.invocations) == 1:
+                self.started_event.set()
+                await self.release_event.wait()
+                return ToolResult(ToolResultStatus.SUCCEEDED, "late")
+            return ToolResult(ToolResultStatus.SUCCEEDED, "ok")
+
+    executor = _FailingFirstThenSuccessExecutor()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    task1 = await service.create(context, _command(idempotency_key="usable-task-1"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        row1 = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task1.id))
+        assert row1 is not None
+        row1.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    scheduler = ScheduledTaskScheduler(database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="))
+
+    tick_task1 = asyncio.create_task(scheduler.tick(now))
+    await executor.started_event.wait()
+    await service.cancel(context, task1.id)
+    executor.release_event.set()
+    await tick_task1
+
+    task2 = await service.create(context, _command(idempotency_key="usable-task-2"))
+    async with database.session() as database_session:
+        row2 = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task2.id))
+        assert row2 is not None
+        row2.next_run_at = now - timedelta(seconds=1)
+        row2.schedule = {
+            "run_at": (now - timedelta(minutes=5)).astimezone(UTC).isoformat(),
+            "interval_minutes": None,
+            "occurrence_limit": None,
+            "idempotency_payload_hash": row2.schedule.get("idempotency_payload_hash"),
+        }
+        await database_session.commit()
+
+    assert await scheduler.tick(now) == 1
+    assert len(executor.invocations) == 2
+
+    async with database.session() as database_session:
+        row2_after = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task2.id))
+        run2 = await database_session.scalar(select(ScheduledTaskRunModel).where(ScheduledTaskRunModel.task_id == task2.id))
+    assert row2_after is not None and row2_after.state == "completed"
+    assert run2 is not None and run2.state == "completed" and run2.outcome_code == "succeeded"
+
