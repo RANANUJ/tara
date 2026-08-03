@@ -32,6 +32,7 @@ from tara_api.safety.clock import SystemClock
 from tara_api.safety.confirmations import DeterministicConfirmationService
 from tara_api.safety.policy import DeterministicActionPolicyService
 from tara_api.tasks.mapping import CapabilityTaskMapper
+from tara_api.tasks.payloads import TaskPayloadProtector
 from tara_api.tasks.scheduler import ScheduledTaskScheduler
 from tara_api.tasks.service import ScheduledTask, ScheduledTaskService
 
@@ -115,6 +116,7 @@ def _service(
             SystemClock(),
             context_validator=authentication,
         ),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
     )
 
 
@@ -181,6 +183,7 @@ async def test_due_task_is_claimed_once_and_fails_closed_without_private_executi
             SystemClock(),
             context_validator=authentication,
         ),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
     )
     task = await service.create(context, _command())
     now = datetime.now(UTC)
@@ -378,6 +381,7 @@ async def test_consequential_task_creates_one_authenticated_m14_proposal(
             SystemClock(),
             context_validator=authentication,
         ),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
     )
     command = _command(
         capability_id=tool.definition.name,

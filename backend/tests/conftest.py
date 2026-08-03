@@ -54,6 +54,7 @@ def settings(database_url: str) -> Settings:
         _env_file=None,
         environment="test",
         service_secret="test-secret",
+        task_payload_encryption_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
         database_url=database_url,
     )
 

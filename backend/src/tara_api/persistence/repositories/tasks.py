@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tara_api.persistence.models import ScheduledTaskModel, ScheduledTaskRunModel
+from tara_api.persistence.models import ScheduledTaskModel, ScheduledTaskRunModel, TaskExecutionPayloadModel
 
 
 class SqlAlchemyScheduledTaskRepository:
@@ -45,6 +45,22 @@ class SqlAlchemyScheduledTaskRepository:
         self._session.add(model)
         await self._session.flush()
         return model
+
+    async def add_payload(self, model: TaskExecutionPayloadModel) -> TaskExecutionPayloadModel:
+        self._session.add(model)
+        await self._session.flush()
+        return model
+
+    async def get_payload(self, task_id: UUID, owner_id: UUID) -> TaskExecutionPayloadModel | None:
+        return cast(
+            TaskExecutionPayloadModel | None,
+            await self._session.scalar(
+                select(TaskExecutionPayloadModel).where(
+                    TaskExecutionPayloadModel.task_id == task_id,
+                    TaskExecutionPayloadModel.owner_id == owner_id,
+                )
+            ),
+        )
 
     async def delete_for_owner(self, task_id: UUID, owner_id: UUID) -> bool:
         model = await self.get_for_owner(task_id, owner_id)

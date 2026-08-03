@@ -57,6 +57,7 @@ from tara_api.safety.permissions import DefaultDenyPermissionService
 from tara_api.safety.policy import DeterministicActionPolicyService
 from tara_api.tasks.service import ScheduledTaskService
 from tara_api.tasks.scheduler import ScheduledTaskScheduler
+from tara_api.tasks.payloads import TaskPayloadProtector, UnavailableTaskPayloadProtector
 from tara_api.safety.tool_executor import SafetyToolExecutor
 from tara_api.memory.lifecycle import MemoryLifecycleScheduler, MemoryLifecycleService
 from tara_api.memory.exports import MemoryExportService
@@ -175,6 +176,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.capability_registry,
         app.state.action_policy,
         app.state.confirmation_service,
+        (
+            TaskPayloadProtector(resolved_settings.task_payload_encryption_key.get_secret_value())
+            if resolved_settings.task_payload_encryption_key.get_secret_value()
+            else UnavailableTaskPayloadProtector()
+        ),
     )
     app.state.scheduled_task_scheduler = ScheduledTaskScheduler(
         app.state.database,

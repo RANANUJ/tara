@@ -119,7 +119,7 @@ def implemented_health_checks(
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version LIMIT 1"))
         except (OSError, SQLAlchemyError):
             return HealthState.UNAVAILABLE, "Schema status is unavailable."
-        return (HealthState.HEALTHY, None) if revision == "20260803_0011" else (HealthState.DEGRADED, "Schema revision is not current.")
+        return (HealthState.HEALTHY, None) if revision == "20260803_0012" else (HealthState.DEGRADED, "Schema revision is not current.")
 
     checks: tuple[HealthCheck, ...] = (
         CallableHealthCheck(DependencyName.APPLICATION, HealthSeverity.REQUIRED, application),

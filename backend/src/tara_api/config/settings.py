@@ -1,5 +1,7 @@
 """Environment-backed settings for the Tara backend bootstrap."""
 
+import base64
+import binascii
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
@@ -32,6 +34,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     database_url: str = "sqlite+aiosqlite:///./data/tara.db"
     service_secret: SecretStr = SecretStr("")
+    task_payload_encryption_key: SecretStr = SecretStr("")
     session_absolute_minutes: int = Field(default=1440, ge=5, le=10080)
     session_idle_minutes: int = Field(default=60, ge=5, le=1440)
     health_check_timeout_ms: int = Field(default=1000, ge=10, le=10000)
@@ -172,6 +175,13 @@ class Settings(BaseSettings):
             raise ValueError("ChromaDB requires an explicit local directory")
         if self.scheduler_max_runs_per_owner > self.scheduler_max_concurrent_runs:
             raise ValueError("scheduler owner concurrency cannot exceed global concurrency")
+        if self.scheduler_enabled:
+            try:
+                key = base64.b64decode(self.task_payload_encryption_key.get_secret_value(), validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise ValueError("scheduler requires a valid task payload encryption key") from error
+            if len(key) != 32:
+                raise ValueError("scheduler requires a 32-byte task payload encryption key")
         if self.tools_filesystem_read_enabled and not self.tools_filesystem_read_roots:
             raise ValueError("filesystem read requires at least one allowlisted root")
         if self.environment == "production" and self.fake_consequential_enabled:
@@ -219,7 +229,15 @@ class Settings(BaseSettings):
 
     def secret_values(self) -> tuple[str, ...]:
         """Return configured secrets for log redaction without exposing them to callers."""
-        return tuple(value for value in (self.service_secret.get_secret_value(), self.elevenlabs_api_key.get_secret_value()) if value)
+        return tuple(
+            value
+            for value in (
+                self.service_secret.get_secret_value(),
+                self.task_payload_encryption_key.get_secret_value(),
+                self.elevenlabs_api_key.get_secret_value(),
+            )
+            if value
+        )
 
     def logging_context(self) -> dict[str, object]:
         """Return settings suitable for structured logging after formatter redaction."""

@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,8 +20,9 @@ from tara_api.domain.protocols import (
 )
 from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskKind, TaskState
 from tara_api.persistence.database import Database
-from tara_api.persistence.models import ScheduledTaskModel
+from tara_api.persistence.models import ScheduledTaskModel, TaskExecutionPayloadModel
 from tara_api.tasks.mapping import CapabilityTaskMapper, MappedTaskCapability
+from tara_api.tasks.payloads import TaskPayloadProtector, UnavailableTaskPayloadProtector
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +51,13 @@ class ScheduledTaskService:
         capability_registry: ToolRegistry,
         policy: ActionPolicyService,
         confirmations: AuthenticatedConfirmationService,
+        payload_protector: TaskPayloadProtector | UnavailableTaskPayloadProtector,
     ) -> None:
         self._database = database
         self._capability_registry = capability_registry
         self._policy = policy
         self._confirmations = confirmations
+        self._payload_protector = payload_protector
         self._creation_locks: dict[tuple[UUID, UUID, str], tuple[asyncio.Lock, int]] = {}
         self._creation_locks_guard = asyncio.Lock()
 
@@ -92,6 +95,7 @@ class ScheduledTaskService:
                         raise ValueError("task_confirmation_unavailable")
                     return self._record(existing)
                 model = ScheduledTaskModel(
+                    id=uuid4(),
                     owner_id=context.owner.id,
                     owner_session_id=context.session.id,
                     title=command.title.strip(),
@@ -124,6 +128,27 @@ class ScheduledTaskService:
                     idempotency_key_hash=key_hash,
                 )
                 await unit.scheduled_tasks.add(model)
+                protected = self._payload_protector.protect(
+                    task_id=model.id,
+                    owner_id=context.owner.id,
+                    capability_id=mapped.capability_id,
+                    binding_hash=mapped.binding_hash,
+                    target=command.target.strip(),
+                    parameters=command.parameters,
+                )
+                await unit.scheduled_tasks.add_payload(
+                    TaskExecutionPayloadModel(
+                        task_id=model.id,
+                        owner_id=context.owner.id,
+                        capability_id=mapped.capability_id,
+                        payload_version=protected.payload_version,
+                        key_version=protected.key_version,
+                        nonce=protected.nonce,
+                        ciphertext=protected.ciphertext,
+                        binding_hash=mapped.binding_hash,
+                        created_at=datetime.now(UTC),
+                    )
+                )
         except IntegrityError:
             return await self._race_winner(context, key_hash, payload_hash, mapped)
 
