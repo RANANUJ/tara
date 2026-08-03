@@ -76,3 +76,6 @@ class UnavailableTaskPayloadProtector:
 
     def protect(self, **_kwargs: object) -> ProtectedTaskPayload:
         raise ValueError("task_payload_unavailable")
+
+    def reveal(self, **_kwargs: object) -> tuple[str, dict[str, str | int | bool | None]]:
+        raise ValueError("task_payload_unavailable")

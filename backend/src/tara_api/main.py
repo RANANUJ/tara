@@ -171,20 +171,23 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.tool_executor,
         app.state.authentication_service,
     )
+    app.state.task_payload_protector = (
+        TaskPayloadProtector(resolved_settings.task_payload_encryption_key.get_secret_value())
+        if resolved_settings.task_payload_encryption_key.get_secret_value()
+        else UnavailableTaskPayloadProtector()
+    )
     app.state.scheduled_task_service = ScheduledTaskService(
         app.state.database,
         app.state.capability_registry,
         app.state.action_policy,
         app.state.confirmation_service,
-        (
-            TaskPayloadProtector(resolved_settings.task_payload_encryption_key.get_secret_value())
-            if resolved_settings.task_payload_encryption_key.get_secret_value()
-            else UnavailableTaskPayloadProtector()
-        ),
+        app.state.task_payload_protector,
     )
     app.state.scheduled_task_scheduler = ScheduledTaskScheduler(
         app.state.database,
         app.state.capability_registry,
+        app.state.tool_executor,
+        app.state.task_payload_protector,
         poll_seconds=resolved_settings.scheduler_poll_seconds,
         due_batch_size=resolved_settings.scheduler_due_batch_size,
         maximum_concurrency=resolved_settings.scheduler_max_concurrent_runs,

@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID
 
-from tara_api.domain.protocols import ToolRegistry
+from tara_api.domain.models import JsonValue, ToolRequest, ToolResultStatus
+from tara_api.domain.protocols import ToolExecutor, ToolRegistry
+from tara_api.domain.tasks import ScheduleDefinition
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import ScheduledTaskModel
+from tara_api.tasks.payloads import TaskPayloadProtector, UnavailableTaskPayloadProtector
 
 
 class ScheduledTaskScheduler:
@@ -19,6 +23,8 @@ class ScheduledTaskScheduler:
         self,
         database: Database,
         registry: ToolRegistry,
+        executor: ToolExecutor,
+        payload_protector: TaskPayloadProtector | UnavailableTaskPayloadProtector,
         *,
         poll_seconds: float = 5,
         due_batch_size: int = 8,
@@ -34,6 +40,8 @@ class ScheduledTaskScheduler:
             raise ValueError("invalid_scheduler_poll_interval")
         self._database = database
         self._registry = registry
+        self._executor = executor
+        self._payload_protector = payload_protector
         self._poll_seconds = poll_seconds
         self._due_batch_size = due_batch_size
         self._lease = timedelta(seconds=claim_lease_seconds)
@@ -71,9 +79,31 @@ class ScheduledTaskScheduler:
     async def _process(self, task: ScheduledTaskModel, run_id: UUID, now: datetime) -> None:
         owner = self._owner_limits.setdefault(task.owner_id, asyncio.Semaphore(self._maximum_per_owner))
         async with self._global, owner:
-            capability_id = task.capability_id
-            error_code = "task_execution_payload_unavailable"
-            if not capability_id or self._registry.get(capability_id) is None:
-                error_code = "task_capability_unavailable"
-            async with self._database.unit_of_work() as unit:
-                await unit.scheduled_tasks.fail_claim(task.id, run_id, now, error_code)
+            try:
+                async with self._database.unit_of_work() as unit:
+                    payload = await unit.scheduled_tasks.get_active_payload(task.id, task.owner_id, now)
+                    if payload is None or payload.capability_id != task.capability_id or payload.binding_hash != task.confirmation_binding_hash:
+                        raise ValueError("task_payload_unavailable")
+                    target, parameters = self._payload_protector.reveal(
+                        task_id=task.id, owner_id=task.owner_id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
+                        payload_version=payload.payload_version, nonce=payload.nonce, ciphertext=payload.ciphertext,
+                    )
+                    tool = self._registry.get(payload.capability_id)
+                    if tool is None:
+                        raise ValueError("task_capability_unavailable")
+                    arguments = {"target": target, **parameters}
+                    tool.validate_arguments(arguments)
+                    if not await unit.scheduled_tasks.mark_running(task.id, run_id, now):
+                        return
+                result = await self._executor.execute(
+                    ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))
+                )
+                if result.status not in {ToolResultStatus.SUCCEEDED, ToolResultStatus.UNCERTAIN}:
+                    raise ValueError("task_execution_denied")
+                schedule = ScheduleDefinition(task.timezone, datetime.fromisoformat(str(task.schedule["run_at"])), task.schedule.get("interval_minutes"), task.schedule.get("occurrence_limit"))
+                next_run_at = schedule.next_after(now)
+                async with self._database.unit_of_work() as unit:
+                    await unit.scheduled_tasks.complete_claim(task.id, run_id, datetime.now(UTC), next_run_at, result.status.value)
+            except ValueError as error:
+                async with self._database.unit_of_work() as unit:
+                    await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), str(error))

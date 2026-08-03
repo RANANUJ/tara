@@ -63,6 +63,11 @@ class _ConsequentialTestTool:
         return ToolResult(ToolResultStatus.DENIED, "Test capability must not execute")
 
 
+class _FailingSchedulerExecutor:
+    async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+        return ToolResult(ToolResultStatus.DENIED, "safe denial")
+
+
 class _FailingConfirmationService(DeterministicConfirmationService):
     async def create_authenticated(
         self,
@@ -193,7 +198,13 @@ async def test_due_task_is_claimed_once_and_fails_closed_without_private_executi
         row.next_run_at = now - timedelta(seconds=1)
         await database_session.commit()
 
-    scheduler = ScheduledTaskScheduler(database, registry, poll_seconds=1)
+    scheduler = ScheduledTaskScheduler(
+        database,
+        registry,
+        _FailingSchedulerExecutor(),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        poll_seconds=1,
+    )
     assert await scheduler.tick(now) == 1
     assert await scheduler.tick(now) == 0
 
@@ -210,10 +221,10 @@ async def test_due_task_is_claimed_once_and_fails_closed_without_private_executi
     assert row.state == "failed"
     assert row.enabled is False
     assert row.claim_id is None
-    assert row.last_outcome == "task_execution_payload_unavailable"
+    assert row.last_outcome == "task_execution_denied"
     assert len(runs) == 1
     assert runs[0].state == "failed"
-    assert runs[0].error_code == "task_execution_payload_unavailable"
+    assert runs[0].error_code == "task_execution_denied"
 
 
 async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> None:

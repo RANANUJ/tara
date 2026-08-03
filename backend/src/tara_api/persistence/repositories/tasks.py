@@ -62,6 +62,43 @@ class SqlAlchemyScheduledTaskRepository:
             ),
         )
 
+    async def get_active_payload(self, task_id: UUID, owner_id: UUID, now: datetime) -> TaskExecutionPayloadModel | None:
+        return cast(
+            TaskExecutionPayloadModel | None,
+            await self._session.scalar(
+                select(TaskExecutionPayloadModel).where(
+                    TaskExecutionPayloadModel.task_id == task_id,
+                    TaskExecutionPayloadModel.owner_id == owner_id,
+                    TaskExecutionPayloadModel.revoked_at.is_(None),
+                    (TaskExecutionPayloadModel.expires_at.is_(None)) | (TaskExecutionPayloadModel.expires_at > now),
+                )
+            ),
+        )
+
+    async def mark_running(self, task_id: UUID, run_id: UUID, now: datetime) -> bool:
+        result = await self._session.execute(
+            update(ScheduledTaskRunModel)
+            .where(ScheduledTaskRunModel.task_id == task_id, ScheduledTaskRunModel.run_id == run_id, ScheduledTaskRunModel.state == "claimed")
+            .values(state="running", started_at=now)
+        )
+        return bool(cast(CursorResult[object], result).rowcount)
+
+    async def complete_claim(self, task_id: UUID, run_id: UUID, now: datetime, next_run_at: datetime | None, outcome: str) -> bool:
+        task_result = await self._session.execute(
+            update(ScheduledTaskModel)
+            .where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.claim_id == run_id, ScheduledTaskModel.state == "active")
+            .values(
+                claim_id=None, claimed_at=None, claim_expires_at=None, state="active" if next_run_at else "completed", enabled=next_run_at is not None,
+                next_run_at=next_run_at, last_run_at=now, last_outcome=outcome,
+            )
+        )
+        run_result = await self._session.execute(
+            update(ScheduledTaskRunModel)
+            .where(ScheduledTaskRunModel.task_id == task_id, ScheduledTaskRunModel.run_id == run_id, ScheduledTaskRunModel.state == "running")
+            .values(state="completed", finished_at=now, outcome_code=outcome)
+        )
+        return bool(cast(CursorResult[object], task_result).rowcount and cast(CursorResult[object], run_result).rowcount)
+
     async def delete_for_owner(self, task_id: UUID, owner_id: UUID) -> bool:
         model = await self.get_for_owner(task_id, owner_id)
         if model is None:
