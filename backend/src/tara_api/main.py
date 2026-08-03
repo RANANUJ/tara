@@ -55,6 +55,7 @@ from tara_api.safety.clock import SystemClock as SafetySystemClock
 from tara_api.safety.confirmations import DeterministicConfirmationService
 from tara_api.safety.permissions import DefaultDenyPermissionService
 from tara_api.safety.policy import DeterministicActionPolicyService
+from tara_api.tasks.service import ScheduledTaskService
 from tara_api.safety.tool_executor import SafetyToolExecutor
 from tara_api.memory.lifecycle import MemoryLifecycleScheduler, MemoryLifecycleService
 from tara_api.memory.exports import MemoryExportService
@@ -151,10 +152,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         context_validator=app.state.authentication_service,
     )
     granted_scopes = (PermissionScope("filesystem.read"),) if filesystem_tool is not None else ()
+    app.state.action_policy = DeterministicActionPolicyService()
     app.state.tool_executor = SafetyToolExecutor(
         app.state.capability_registry,
         DefaultDenyPermissionService(granted_scopes),
-        DeterministicActionPolicyService(),
+        app.state.action_policy,
         app.state.confirmation_service,
         app.state.safety_store,
         SafetySystemClock(),
@@ -163,6 +165,12 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.capability_registry,
         app.state.tool_executor,
         app.state.authentication_service,
+    )
+    app.state.scheduled_task_service = ScheduledTaskService(
+        app.state.database,
+        app.state.capability_registry,
+        app.state.action_policy,
+        app.state.confirmation_service,
     )
     app.state.fake_consequential_service = FakeConsequentialActionService(
         app.state.confirmation_service,

@@ -14,6 +14,7 @@ from tara_api.domain.auth import AuthenticatedOwnerContext
 from tara_api.domain.tasks import ScheduleDefinition, TaskKind, TaskState
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import ScheduledTaskModel
+from tara_api.domain.protocols import ActionPolicyService, ConfirmationService, ToolRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +35,11 @@ class ScheduledTask:
 
 
 class ScheduledTaskService:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, capability_registry: ToolRegistry, policy: ActionPolicyService, confirmations: ConfirmationService) -> None:
         self._database = database
+        self._capability_registry = capability_registry
+        self._policy = policy
+        self._confirmations = confirmations
 
     async def create(self, context: AuthenticatedOwnerContext, *, title: str, kind: TaskKind, instruction: str, schedule: ScheduleDefinition, idempotency_key: str) -> ScheduledTask:
         title, instruction = title.strip(), instruction.strip()
