@@ -11,7 +11,8 @@ from uuid import UUID
 from sqlalchemy import select
 
 from tara_api.domain.auth import AuthenticatedOwnerContext
-from tara_api.domain.tasks import ScheduleDefinition, TaskKind, TaskState
+from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskKind, TaskState
+from tara_api.tasks.mapping import CapabilityTaskMapper
 from tara_api.persistence.database import Database
 from tara_api.persistence.models import ScheduledTaskModel
 from tara_api.domain.protocols import ActionPolicyService, ConfirmationService, ToolRegistry
@@ -41,12 +42,10 @@ class ScheduledTaskService:
         self._policy = policy
         self._confirmations = confirmations
 
-    async def create(self, context: AuthenticatedOwnerContext, *, title: str, kind: TaskKind, instruction: str, schedule: ScheduleDefinition, idempotency_key: str) -> ScheduledTask:
-        title, instruction = title.strip(), instruction.strip()
-        if not title or len(title) > 160 or not instruction or len(instruction) > 1024 or not idempotency_key:
-            raise ValueError("invalid_task_input")
-        key_hash = sha256(idempotency_key.encode()).hexdigest()
-        payload_hash = sha256(json.dumps({"title": title, "kind": kind.value, "instruction": instruction, "schedule": schedule.run_at.astimezone(UTC).isoformat(), "timezone": schedule.timezone, "interval": schedule.interval_minutes, "count": schedule.occurrence_limit}, sort_keys=True).encode()).hexdigest()
+    async def create(self, context: AuthenticatedOwnerContext, command: ScheduledTaskCreateCommand) -> ScheduledTask:
+        mapped = CapabilityTaskMapper(self._capability_registry, self._policy).map(command)
+        key_hash = sha256(command.idempotency_key.encode()).hexdigest()
+        payload_hash = command.binding_hash()
         async with self._database.unit_of_work() as unit:
             session = unit._require_session()  # noqa: SLF001
             existing = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == context.owner.id, ScheduledTaskModel.idempotency_key_hash == key_hash))
@@ -56,8 +55,9 @@ class ScheduledTaskService:
                 return self._record(existing)
             model = ScheduledTaskModel(
                 owner_id=context.owner.id, owner_session_id=context.session.id, title=title, task_kind=kind.value,
-                instruction=instruction, schedule={"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit, "idempotency_payload_hash": payload_hash}, timezone=schedule.timezone,
-                enabled=True, state=TaskState.ACTIVE.value, next_run_at=schedule.next_after(datetime.now(UTC)), idempotency_key_hash=key_hash,
+                instruction=command.instruction.strip(), schedule={"run_at": command.schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": command.schedule.interval_minutes, "occurrence_limit": command.schedule.occurrence_limit, "idempotency_payload_hash": payload_hash}, timezone=command.schedule.timezone,
+                capability_id=mapped.capability_id, target_summary=mapped.target_summary, target_identity_hash=mapped.target_hash, parameters_hash=mapped.parameters_hash, confirmation_binding_hash=mapped.binding_hash, risk_level=mapped.risk_level,
+                enabled=not mapped.confirmation_required, state=(TaskState.PENDING_CONFIRMATION if mapped.confirmation_required else TaskState.ACTIVE).value, next_run_at=None if mapped.confirmation_required else command.schedule.next_after(datetime.now(UTC)), idempotency_key_hash=key_hash,
             )
             session.add(model)
             await session.flush()
