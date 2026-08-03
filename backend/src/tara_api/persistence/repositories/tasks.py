@@ -58,6 +58,45 @@ class SqlAlchemyScheduledTaskRepository:
         model = await self.get_for_owner(task_id, owner_id)
         if model is None:
             return False
-        model.confirmation_id = model.confirmation_status = model.confirmation_binding_hash = None
+        model.confirmation_id = None
+        model.confirmation_status = None
+        model.confirmation_expires_at = None
+        model.confirmation_binding_hash = None
         await self._session.flush()
         return True
+
+    async def invalidate_confirmation(self, task_id: UUID, owner_id: UUID) -> ScheduledTaskModel | None:
+        model = await self.get_for_owner(task_id, owner_id)
+        if model is None:
+            return None
+        model.confirmation_id = None
+        model.confirmation_status = None
+        model.confirmation_expires_at = None
+        model.confirmation_binding_hash = None
+        model.state = "pending_confirmation"
+        model.enabled = False
+        model.next_run_at = None
+        await self._session.flush()
+        return model
+
+    async def activate_after_confirmation(
+        self,
+        task_id: UUID,
+        owner_id: UUID,
+        confirmation_id: UUID,
+        next_run_at: datetime,
+    ) -> ScheduledTaskModel | None:
+        model = await self.get_for_owner(task_id, owner_id)
+        if (
+            model is None
+            or model.state != "pending_confirmation"
+            or model.enabled
+            or model.confirmation_id != confirmation_id
+        ):
+            return None
+        model.state = "active"
+        model.enabled = True
+        model.next_run_at = next_run_at
+        model.confirmation_status = "executing"
+        await self._session.flush()
+        return model

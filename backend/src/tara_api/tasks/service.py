@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from tara_api.domain.auth import AuthenticatedOwnerContext
-from tara_api.domain.models import JsonValue, ToolRequest
+from tara_api.domain.models import ConfirmationStatus, JsonValue, ToolRequest
 from tara_api.domain.protocols import (
     ActionPolicyService,
     AuthenticatedConfirmationService,
@@ -138,6 +138,52 @@ class ScheduledTaskService:
             row.next_run_at = None
             return True
 
+    async def approve_confirmation(
+        self,
+        context: AuthenticatedOwnerContext,
+        task_id: UUID,
+        response: str,
+    ) -> ScheduledTask | None:
+        """Approve and consume an attached M14 proposal before activating one task."""
+        now = datetime.now(UTC)
+        async with self._database.unit_of_work() as unit:
+            row = await unit.scheduled_tasks.get_for_owner(task_id, context.owner.id)
+            if row is None:
+                return None
+            request = self._validate_pending_confirmation(context, row, now)
+            confirmation_id = row.confirmation_id
+            if confirmation_id is None:
+                raise ValueError("task_confirmation_missing")
+
+        confirmation = await self._confirmations.get_authenticated(context, confirmation_id)
+        if confirmation is None:
+            return None
+        if (
+            confirmation.status is not ConfirmationStatus.AWAITING_CONFIRMATION
+            or confirmation.expires_at != row.confirmation_expires_at
+            or confirmation.request_hash != request.canonical_hash()
+        ):
+            raise ValueError("task_confirmation_binding_invalid")
+
+        authorization = await self._confirmations.respond_authenticated(context, confirmation_id, response)
+        if authorization is None:
+            return None
+        if not await self._confirmations.consume_authenticated(context, authorization, request):
+            return None
+
+        schedule = self._schedule_from_row(row)
+        next_run_at = schedule.next_after(now)
+        if next_run_at is None:
+            raise ValueError("task_schedule_expired")
+        async with self._database.unit_of_work() as unit:
+            activated = await unit.scheduled_tasks.activate_after_confirmation(
+                task_id,
+                context.owner.id,
+                confirmation_id,
+                next_run_at,
+            )
+        return self._record(activated) if activated is not None else None
+
     async def list(self, context: AuthenticatedOwnerContext) -> list[ScheduledTask]:
         async with self._database.unit_of_work() as unit:
             rows = await unit.scheduled_tasks.list_for_owner(context.owner.id)
@@ -183,6 +229,11 @@ class ScheduledTaskService:
                 row.schedule = {"run_at": schedule.run_at.astimezone(UTC).isoformat(), "interval_minutes": schedule.interval_minutes, "occurrence_limit": schedule.occurrence_limit}
                 row.timezone = schedule.timezone
                 row.next_run_at = schedule.next_after(datetime.now(UTC)) if row.enabled else None
+            if row.confirmation_id is not None and {"instruction", "schedule"} & set(values):
+                invalidated = await unit.scheduled_tasks.invalidate_confirmation(task_id, context.owner.id)
+                if invalidated is None:
+                    return None
+                row = invalidated
             return self._record(row)
 
     async def resume(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
@@ -215,7 +266,7 @@ class ScheduledTaskService:
 
     @staticmethod
     def _record(row: ScheduledTaskModel) -> ScheduledTask:
-        schedule = ScheduleDefinition(row.timezone, datetime.fromisoformat(str(row.schedule["run_at"])), row.schedule.get("interval_minutes"), row.schedule.get("occurrence_limit"))
+        schedule = ScheduledTaskService._schedule_from_row(row)
         return ScheduledTask(
             id=row.id,
             title=row.title,
@@ -256,3 +307,59 @@ class ScheduledTaskService:
             "task_binding_hash": mapped.binding_hash,
         }
         return ToolRequest(mapped.definition.name, mapped.definition.version, binding)
+
+    def _validate_pending_confirmation(
+        self,
+        context: AuthenticatedOwnerContext,
+        row: ScheduledTaskModel,
+        now: datetime,
+    ) -> ToolRequest:
+        if row.state != TaskState.PENDING_CONFIRMATION.value or row.enabled:
+            raise ValueError("task_not_pending_confirmation")
+        if row.confirmation_id is None or row.confirmation_binding_hash is None:
+            raise ValueError("task_confirmation_missing")
+        if row.confirmation_status != ConfirmationStatus.AWAITING_CONFIRMATION.value:
+            raise ValueError("task_confirmation_invalid")
+        if row.confirmation_expires_at is None or row.confirmation_expires_at <= now:
+            raise ValueError("task_confirmation_expired")
+        if row.owner_session_id != context.session.id:
+            raise ValueError("task_confirmation_invalid")
+        tool = self._capability_registry.get(row.capability_id or "")
+        if tool is None or row.target_identity_hash is None or row.parameters_hash is None:
+            raise ValueError("task_confirmation_binding_invalid")
+        request = self._confirmation_request_from_row(row, tool.definition.name, tool.definition.version)
+        if row.confirmation_binding_hash != request.arguments["task_binding_hash"]:
+            raise ValueError("task_confirmation_binding_invalid")
+        return request
+
+    @staticmethod
+    def _schedule_from_row(row: ScheduledTaskModel) -> ScheduleDefinition:
+        return ScheduleDefinition(
+            row.timezone,
+            datetime.fromisoformat(str(row.schedule["run_at"])),
+            row.schedule.get("interval_minutes"),
+            row.schedule.get("occurrence_limit"),
+        )
+
+    @staticmethod
+    def _confirmation_request_from_row(
+        row: ScheduledTaskModel,
+        tool_name: str,
+        schema_version: str,
+    ) -> ToolRequest:
+        schedule: dict[str, JsonValue] = {
+            "run_at": row.schedule["run_at"],
+            "interval_minutes": row.schedule.get("interval_minutes"),
+            "occurrence_limit": row.schedule.get("occurrence_limit"),
+        }
+        binding: dict[str, JsonValue] = {
+            "task_id": str(row.id),
+            "capability_id": row.capability_id or "",
+            "target_identity_hash": row.target_identity_hash or "",
+            "parameters_hash": row.parameters_hash or "",
+            "instruction_hash": sha256(row.instruction.strip().encode()).hexdigest(),
+            "schedule": schedule,
+            "timezone": row.timezone,
+            "task_binding_hash": row.confirmation_binding_hash or "",
+        }
+        return ToolRequest(tool_name, schema_version, binding)

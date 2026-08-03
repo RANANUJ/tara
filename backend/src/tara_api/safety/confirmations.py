@@ -58,6 +58,20 @@ class DeterministicConfirmationService:
             return None
         return await self._create(request, definition, context)
 
+    async def get_authenticated(
+        self,
+        context: AuthenticatedOwnerContext,
+        confirmation_id: UUID,
+    ) -> PendingConfirmation | None:
+        if not await self._context_is_active(context):
+            await self._publish_context_denial("confirmation.get.denied", context)
+            return None
+        confirmation = await self._store.get_confirmation(confirmation_id)
+        if confirmation is None or not self._matches_context(confirmation, context):
+            await self._publish_context_denial("confirmation.get.denied", context)
+            return None
+        return confirmation
+
     async def respond(self, confirmation_id: UUID, response: str) -> ConfirmationAuthorization | None:
         """M3-only unbound compatibility seam; it is not used by authenticated routes."""
         return await self._respond(confirmation_id, response, None)

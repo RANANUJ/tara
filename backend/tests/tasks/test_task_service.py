@@ -344,3 +344,109 @@ async def test_consequential_attachment_failure_is_safe_and_service_remains_usab
 
     read_only = await service.create(context, _command(idempotency_key="read-only-after-failure"))
     assert read_only.state is TaskState.ACTIVE
+
+
+async def test_owner_session_approval_consumes_once_and_activates_task(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(
+        database,
+        root,
+        authentication,
+        additional_tools=(_ConsequentialTestTool(),),
+    )
+    task = await service.create(
+        context,
+        _command(
+            capability_id="fake.scheduled.send",
+            target="private-recipient",
+            parameters={"content": "private-payload"},
+        ),
+    )
+
+    approved = await service.approve_confirmation(context, task.id, "yes")
+
+    assert approved is not None
+    assert approved.state is TaskState.ACTIVE
+    assert approved.enabled is True
+    assert approved.schedule.next_after(datetime(2026, 8, 3, tzinfo=UTC)) is not None
+    with pytest.raises(ValueError, match="task_not_pending_confirmation"):
+        await service.approve_confirmation(context, task.id, "yes")
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+    assert row is not None
+    assert row.confirmation_status == "executing"
+    assert row.next_run_at is not None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("capability_id", "unknown.capability"),
+        ("target_identity_hash", "0" * 64),
+        ("parameters_hash", "1" * 64),
+        ("instruction", "changed instruction"),
+        ("timezone", "Asia/Kolkata"),
+    ],
+)
+async def test_changed_persisted_binding_rejects_task_confirmation(
+    database: Database,
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication, additional_tools=(_ConsequentialTestTool(),))
+    task = await service.create(
+        context,
+        _command(
+            capability_id="fake.scheduled.send",
+            target="private-recipient",
+            parameters={"content": "private-payload"},
+        ),
+    )
+    async with database.unit_of_work() as unit:
+        row = await unit.scheduled_tasks.get_for_owner(task.id, context.owner.id)
+        assert row is not None
+        setattr(row, field, value)
+
+    with pytest.raises(ValueError, match="task_confirmation_binding_invalid"):
+        await service.approve_confirmation(context, task.id, "yes")
+    current = await service.get(context, task.id)
+    assert current is not None
+    assert current.state is TaskState.PENDING_CONFIRMATION
+    assert current.enabled is False
+
+
+async def test_bound_field_update_invalidates_attached_confirmation(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication, additional_tools=(_ConsequentialTestTool(),))
+    task = await service.create(
+        context,
+        _command(
+            capability_id="fake.scheduled.send",
+            target="private-recipient",
+            parameters={"content": "private-payload"},
+        ),
+    )
+
+    updated = await service.update(context, task.id, {"instruction": "Changed private instruction"})
+
+    assert updated is not None
+    assert updated.state is TaskState.PENDING_CONFIRMATION
+    assert updated.enabled is False
+    assert updated.confirmation_id is None
+    assert updated.confirmation_expires_at is None
+    with pytest.raises(ValueError, match="task_confirmation_missing"):
+        await service.approve_confirmation(context, task.id, "yes")

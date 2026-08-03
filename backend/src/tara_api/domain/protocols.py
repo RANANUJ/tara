@@ -63,6 +63,26 @@ class AuthenticatedConfirmationService(ConfirmationService, Protocol):
         definition: ToolDefinition,
     ) -> PendingConfirmation | None: ...
 
+    async def get_authenticated(
+        self,
+        context: AuthenticatedOwnerContext,
+        confirmation_id: UUID,
+    ) -> PendingConfirmation | None: ...
+
+    async def respond_authenticated(
+        self,
+        context: AuthenticatedOwnerContext,
+        confirmation_id: UUID,
+        response: str,
+    ) -> ConfirmationAuthorization | None: ...
+
+    async def consume_authenticated(
+        self,
+        context: AuthenticatedOwnerContext,
+        authorization: ConfirmationAuthorization,
+        request: ToolRequest,
+    ) -> bool: ...
+
 
 class ToolExecutor(Protocol):
     async def execute(
