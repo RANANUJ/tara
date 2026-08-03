@@ -198,6 +198,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         cleanup_batch_size=resolved_settings.scheduler_cleanup_batch_size,
         payload_retention_hours=resolved_settings.scheduler_payload_retention_hours,
         run_retention_days=resolved_settings.scheduler_run_retention_days,
+        shutdown_timeout_seconds=resolved_settings.scheduler_shutdown_timeout_seconds,
     )
     app.state.fake_consequential_service = FakeConsequentialActionService(
         app.state.confirmation_service,

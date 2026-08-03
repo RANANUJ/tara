@@ -36,10 +36,11 @@ class ScheduledTaskScheduler:
         cleanup_batch_size: int = 32,
         payload_retention_hours: int = 24,
         run_retention_days: int = 30,
+        shutdown_timeout_seconds: int = 10,
     ) -> None:
         if not 1 <= due_batch_size <= 64 or not 1 <= maximum_concurrency <= 8:
             raise ValueError("invalid_scheduler_limits")
-        if not 1 <= maximum_per_owner <= maximum_concurrency or not 1 <= claim_lease_seconds <= 300 or not 1 <= run_timeout_seconds <= 300:
+        if not 1 <= maximum_per_owner <= maximum_concurrency or not 1 <= claim_lease_seconds <= 300 or not 1 <= run_timeout_seconds <= 300 or not 1 <= shutdown_timeout_seconds <= 60:
             raise ValueError("invalid_scheduler_limits")
         if not 0.1 <= poll_seconds <= 300:
             raise ValueError("invalid_scheduler_poll_interval")
@@ -55,6 +56,7 @@ class ScheduledTaskScheduler:
         self._cleanup_batch_size = cleanup_batch_size
         self._payload_retention = timedelta(hours=payload_retention_hours)
         self._run_retention = timedelta(days=run_retention_days)
+        self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._last_cleanup_at: datetime | None = None
         self._global = asyncio.Semaphore(maximum_concurrency)
         self._owner_limits: dict[UUID, asyncio.Semaphore] = {}
@@ -71,8 +73,8 @@ class ScheduledTaskScheduler:
         self._stopping = True
         if self._loop_task is not None:
             self._loop_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._loop_task
+            with suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(self._loop_task, timeout=self._shutdown_timeout_seconds)
         self._loop_task = None
 
     async def tick(self, now: datetime | None = None) -> int:
