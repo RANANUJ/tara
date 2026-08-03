@@ -62,6 +62,7 @@ class ScheduledTaskScheduler:
         self._owner_limits: dict[UUID, asyncio.Semaphore] = {}
         self._maximum_per_owner = maximum_per_owner
         self._loop_task: asyncio.Task[None] | None = None
+        self._tick_lock = asyncio.Lock()
         self._stopping = False
 
     def start(self) -> None:
@@ -79,11 +80,12 @@ class ScheduledTaskScheduler:
 
     async def tick(self, now: datetime | None = None) -> int:
         claimed_at = now or datetime.now(UTC)
-        async with self._database.unit_of_work() as unit:
-            await unit.scheduled_tasks.recover_stale_claims(claimed_at, self._due_batch_size)
-            claimed = await unit.scheduled_tasks.claim_due(claimed_at, self._due_batch_size, self._lease)
-        await asyncio.gather(*(self._process(task, run_id, claimed_at) for task, run_id in claimed))
-        return len(claimed)
+        async with self._tick_lock:
+            async with self._database.unit_of_work() as unit:
+                await unit.scheduled_tasks.recover_stale_claims(claimed_at, self._due_batch_size)
+                claimed = await unit.scheduled_tasks.claim_due(claimed_at, self._due_batch_size, self._lease)
+            await asyncio.gather(*(self._process(task, run_id, claimed_at) for task, run_id in claimed))
+            return len(claimed)
 
     async def _run(self) -> None:
         while not self._stopping:

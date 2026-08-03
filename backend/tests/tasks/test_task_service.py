@@ -205,7 +205,7 @@ async def test_due_task_is_claimed_once_and_fails_closed_without_private_executi
         TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
         poll_seconds=1,
     )
-    assert await scheduler.tick(now) == 1
+    assert sum(await asyncio.gather(*(scheduler.tick(now) for _ in range(10)))) == 1
     assert await scheduler.tick(now) == 0
 
     async with database.session() as database_session:
