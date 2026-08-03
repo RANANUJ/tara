@@ -75,6 +75,60 @@ class SqlAlchemyScheduledTaskRepository:
             ),
         )
 
+    async def revoke_payload(self, task_id: UUID, owner_id: UUID, now: datetime) -> bool:
+        result = await self._session.execute(
+            update(TaskExecutionPayloadModel)
+            .where(
+                TaskExecutionPayloadModel.task_id == task_id,
+                TaskExecutionPayloadModel.owner_id == owner_id,
+                TaskExecutionPayloadModel.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        return bool(cast(CursorResult[object], result).rowcount)
+
+    async def delete_payload(self, task_id: UUID, owner_id: UUID) -> bool:
+        payload = await self.get_payload(task_id, owner_id)
+        if payload is None:
+            return False
+        await self._session.delete(payload)
+        return True
+
+    async def list_inactive_payloads(self, now: datetime, limit: int) -> list[TaskExecutionPayloadModel]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(TaskExecutionPayloadModel)
+                    .where((TaskExecutionPayloadModel.revoked_at.is_not(None)) | (TaskExecutionPayloadModel.expires_at <= now))
+                    .order_by(TaskExecutionPayloadModel.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    async def cancel_for_owner(self, task_id: UUID, owner_id: UUID, now: datetime) -> bool:
+        task = await self.get_for_owner(task_id, owner_id)
+        if task is None:
+            return False
+        if task.state == "canceled":
+            return True
+        run_id = task.claim_id
+        task.state, task.enabled, task.next_run_at = "canceled", False, None
+        task.claim_id, task.claimed_at, task.claim_expires_at = None, None, None
+        await self.revoke_payload(task_id, owner_id, now)
+        if run_id is not None:
+            await self._session.execute(
+                update(ScheduledTaskRunModel)
+                .where(
+                    ScheduledTaskRunModel.task_id == task_id,
+                    ScheduledTaskRunModel.run_id == run_id,
+                    ScheduledTaskRunModel.state.in_(("claimed", "running")),
+                )
+                .values(state="canceled", finished_at=now, error_code="task_canceled")
+            )
+        await self._session.flush()
+        return True
+
     async def mark_running(self, task_id: UUID, run_id: UUID, now: datetime) -> bool:
         result = await self._session.execute(
             update(ScheduledTaskRunModel)
@@ -248,7 +302,7 @@ class SqlAlchemyScheduledTaskRepository:
     async def fail_claim(self, task_id: UUID, run_id: UUID, now: datetime, error_code: str) -> bool:
         task_result = await self._session.execute(
             update(ScheduledTaskModel)
-            .where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.claim_id == run_id)
+            .where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.claim_id == run_id, ScheduledTaskModel.state == "active")
             .values(
                 claim_id=None,
                 claimed_at=None,
@@ -262,7 +316,11 @@ class SqlAlchemyScheduledTaskRepository:
         )
         run_result = await self._session.execute(
             update(ScheduledTaskRunModel)
-            .where(ScheduledTaskRunModel.task_id == task_id, ScheduledTaskRunModel.run_id == run_id)
+            .where(
+                ScheduledTaskRunModel.task_id == task_id,
+                ScheduledTaskRunModel.run_id == run_id,
+                ScheduledTaskRunModel.state.in_(("claimed", "running")),
+            )
             .values(state="failed", finished_at=now, error_code=error_code)
         )
         return bool(

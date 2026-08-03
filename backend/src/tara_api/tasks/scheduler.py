@@ -31,10 +31,11 @@ class ScheduledTaskScheduler:
         maximum_concurrency: int = 2,
         maximum_per_owner: int = 1,
         claim_lease_seconds: int = 60,
+        run_timeout_seconds: int = 30,
     ) -> None:
         if not 1 <= due_batch_size <= 64 or not 1 <= maximum_concurrency <= 8:
             raise ValueError("invalid_scheduler_limits")
-        if not 1 <= maximum_per_owner <= maximum_concurrency or not 1 <= claim_lease_seconds <= 300:
+        if not 1 <= maximum_per_owner <= maximum_concurrency or not 1 <= claim_lease_seconds <= 300 or not 1 <= run_timeout_seconds <= 300:
             raise ValueError("invalid_scheduler_limits")
         if not 0.1 <= poll_seconds <= 300:
             raise ValueError("invalid_scheduler_poll_interval")
@@ -45,6 +46,7 @@ class ScheduledTaskScheduler:
         self._poll_seconds = poll_seconds
         self._due_batch_size = due_batch_size
         self._lease = timedelta(seconds=claim_lease_seconds)
+        self._run_timeout_seconds = run_timeout_seconds
         self._global = asyncio.Semaphore(maximum_concurrency)
         self._owner_limits: dict[UUID, asyncio.Semaphore] = {}
         self._maximum_per_owner = maximum_per_owner
@@ -95,8 +97,9 @@ class ScheduledTaskScheduler:
                     tool.validate_arguments(arguments)
                     if not await unit.scheduled_tasks.mark_running(task.id, run_id, now):
                         return
-                result = await self._executor.execute(
-                    ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))
+                result = await asyncio.wait_for(
+                    self._executor.execute(ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))),
+                    timeout=self._run_timeout_seconds,
                 )
                 if result.status not in {ToolResultStatus.SUCCEEDED, ToolResultStatus.UNCERTAIN}:
                     raise ValueError("task_execution_denied")
@@ -107,3 +110,6 @@ class ScheduledTaskScheduler:
             except ValueError as error:
                 async with self._database.unit_of_work() as unit:
                     await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), str(error))
+            except TimeoutError:
+                async with self._database.unit_of_work() as unit:
+                    await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), "task_execution_timed_out")

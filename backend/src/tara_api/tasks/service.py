@@ -343,7 +343,8 @@ class ScheduledTaskService:
         return await self._set_state(context, task_id, TaskState.ACTIVE, True)
 
     async def cancel(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
-        return await self._set_state(context, task_id, TaskState.CANCELED, False, idempotent=True)
+        async with self._database.unit_of_work() as unit:
+            return await unit.scheduled_tasks.cancel_for_owner(task_id, context.owner.id, datetime.now(UTC))
 
     async def delete(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         async with self._database.unit_of_work() as unit:

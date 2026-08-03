@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     scheduler_max_concurrent_runs: int = Field(default=2, ge=1, le=8)
     scheduler_max_runs_per_owner: int = Field(default=1, ge=1, le=8)
     scheduler_claim_lease_seconds: int = Field(default=60, ge=1, le=300)
+    scheduler_run_timeout_seconds: int = Field(default=30, ge=1, le=300)
     tools_filesystem_read_enabled: bool = False
     tools_filesystem_read_roots: tuple[str, ...] = ()
     fake_consequential_enabled: bool = False

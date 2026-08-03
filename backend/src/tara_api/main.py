@@ -193,6 +193,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         maximum_concurrency=resolved_settings.scheduler_max_concurrent_runs,
         maximum_per_owner=resolved_settings.scheduler_max_runs_per_owner,
         claim_lease_seconds=resolved_settings.scheduler_claim_lease_seconds,
+        run_timeout_seconds=resolved_settings.scheduler_run_timeout_seconds,
     )
     app.state.fake_consequential_service = FakeConsequentialActionService(
         app.state.confirmation_service,
