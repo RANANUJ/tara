@@ -269,6 +269,23 @@ async def test_scheduler_global_dispatch_bound_leaves_remaining_due_work_for_lat
     assert executor.invocations == 2
 
 
+async def test_scheduler_releases_unused_owner_limiter_entry(database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    scheduler = ScheduledTaskScheduler(
+        database,
+        CapabilityRegistry(AllowlistedFilesystemListTool((root,))),
+        _FailingSchedulerExecutor(),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+
+    limiter = await scheduler._retain_owner_limit(context.owner.id)  # noqa: SLF001
+    assert context.owner.id in scheduler._owner_limits  # noqa: SLF001
+    await scheduler._release_owner_limit(context.owner.id, limiter)  # noqa: SLF001
+    assert context.owner.id not in scheduler._owner_limits  # noqa: SLF001
+
+
 async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> None:
     context, authentication = await _authenticated_context(database)
 
