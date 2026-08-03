@@ -116,11 +116,14 @@ class ScheduledTaskScheduler:
         async with self._global, owner:
             try:
                 async with self._database.unit_of_work() as unit:
-                    payload = await unit.scheduled_tasks.get_active_payload(task.id, task.owner_id, now)
-                    if payload is None or payload.capability_id != task.capability_id or payload.binding_hash != task.confirmation_binding_hash:
+                    current = await unit.scheduled_tasks.get_claimed_for_execution(task.id, task.owner_id, run_id)
+                    if current is None:
+                        return
+                    payload = await unit.scheduled_tasks.get_active_payload(current.id, current.owner_id, now)
+                    if payload is None or payload.capability_id != current.capability_id or payload.binding_hash != current.confirmation_binding_hash:
                         raise ValueError("task_payload_unavailable")
                     target, parameters = self._payload_protector.reveal(
-                        task_id=task.id, owner_id=task.owner_id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
+                        task_id=current.id, owner_id=current.owner_id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
                         payload_version=payload.payload_version, nonce=payload.nonce, ciphertext=payload.ciphertext,
                     )
                     tool = self._registry.get(payload.capability_id)
@@ -128,7 +131,7 @@ class ScheduledTaskScheduler:
                         raise ValueError("task_capability_unavailable")
                     arguments = {"target": target, **parameters}
                     tool.validate_arguments(arguments)
-                    if not await unit.scheduled_tasks.mark_running(task.id, run_id, now):
+                    if not await unit.scheduled_tasks.mark_running(current.id, run_id, now):
                         return
                 result = await asyncio.wait_for(
                     self._executor.execute(ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))),

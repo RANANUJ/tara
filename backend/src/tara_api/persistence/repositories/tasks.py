@@ -21,6 +21,20 @@ class SqlAlchemyScheduledTaskRepository:
             await self._session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id, ScheduledTaskModel.owner_id == owner_id)),
         )
 
+    async def get_claimed_for_execution(self, task_id: UUID, owner_id: UUID, run_id: UUID) -> ScheduledTaskModel | None:
+        return cast(
+            ScheduledTaskModel | None,
+            await self._session.scalar(
+                select(ScheduledTaskModel).where(
+                    ScheduledTaskModel.id == task_id,
+                    ScheduledTaskModel.owner_id == owner_id,
+                    ScheduledTaskModel.claim_id == run_id,
+                    ScheduledTaskModel.state == "active",
+                    ScheduledTaskModel.enabled.is_(True),
+                )
+            ),
+        )
+
     async def list_for_owner(self, owner_id: UUID) -> list[ScheduledTaskModel]:
         return list((await self._session.scalars(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == owner_id).order_by(ScheduledTaskModel.created_at))).all())
 
