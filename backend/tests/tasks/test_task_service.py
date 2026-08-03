@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from tara_api.domain.tasks import ScheduleDefinition, TaskKind, TaskState
+from tara_api.domain.tasks import ScheduleDefinition, ScheduledTaskCreateCommand, TaskState
 from tara_api.tasks.service import ScheduledTaskService
 
 from tara_api.domain.auth import AuthenticatedOwnerContext, Owner, OwnerSession
@@ -20,6 +20,7 @@ async def test_owner_scoped_creation_is_idempotent(database) -> None:
 
     service = ScheduledTaskService(database, CapabilityRegistry(None), DeterministicActionPolicyService(), DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock()))
     schedule = ScheduleDefinition("UTC", datetime(2027, 1, 1, tzinfo=UTC))
-    first = await service.create(context, title="Reminder", kind=TaskKind.REMINDER, instruction="Drink water", schedule=schedule, idempotency_key="one")
-    second = await service.create(context, title="Reminder", kind=TaskKind.REMINDER, instruction="Drink water", schedule=schedule, idempotency_key="one")
+    command = ScheduledTaskCreateCommand("Reminder", "Drink water", "filesystem.list", ".", {}, schedule, "one")
+    first = await service.create(context, command)
+    second = await service.create(context, command)
     assert first.id == second.id and first.state is TaskState.ACTIVE

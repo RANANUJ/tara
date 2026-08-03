@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
 from uuid import UUID
 
 from sqlalchemy import select
