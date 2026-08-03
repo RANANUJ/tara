@@ -50,6 +50,7 @@ class ScheduledTaskScheduler:
         self._payload_protector = payload_protector
         self._poll_seconds = poll_seconds
         self._due_batch_size = due_batch_size
+        self._maximum_concurrency = maximum_concurrency
         self._lease = timedelta(seconds=claim_lease_seconds)
         self._run_timeout_seconds = run_timeout_seconds
         self._cleanup_interval = timedelta(seconds=cleanup_interval_seconds)
@@ -82,8 +83,9 @@ class ScheduledTaskScheduler:
         claimed_at = now or datetime.now(UTC)
         async with self._tick_lock:
             async with self._database.unit_of_work() as unit:
-                await unit.scheduled_tasks.recover_stale_claims(claimed_at, self._due_batch_size)
-                claimed = await unit.scheduled_tasks.claim_due(claimed_at, self._due_batch_size, self._lease)
+                dispatch_limit = min(self._due_batch_size, self._maximum_concurrency)
+                await unit.scheduled_tasks.recover_stale_claims(claimed_at, dispatch_limit)
+                claimed = await unit.scheduled_tasks.claim_due(claimed_at, dispatch_limit, self._lease)
             await asyncio.gather(*(self._process(task, run_id, claimed_at) for task, run_id in claimed))
             return len(claimed)
 
