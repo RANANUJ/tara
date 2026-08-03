@@ -60,7 +60,8 @@ class ScheduledTaskScheduler:
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._last_cleanup_at: datetime | None = None
         self._global = asyncio.Semaphore(maximum_concurrency)
-        self._owner_limits: dict[UUID, asyncio.Semaphore] = {}
+        self._owner_limits: dict[UUID, tuple[asyncio.Semaphore, int]] = {}
+        self._owner_limits_guard = asyncio.Lock()
         self._maximum_per_owner = maximum_per_owner
         self._loop_task: asyncio.Task[None] | None = None
         self._tick_lock = asyncio.Lock()
@@ -112,40 +113,59 @@ class ScheduledTaskScheduler:
         return payloads, runs
 
     async def _process(self, task: ScheduledTaskModel, run_id: UUID, now: datetime) -> None:
-        owner = self._owner_limits.setdefault(task.owner_id, asyncio.Semaphore(self._maximum_per_owner))
-        async with self._global, owner:
-            try:
-                async with self._database.unit_of_work() as unit:
-                    current = await unit.scheduled_tasks.get_claimed_for_execution(task.id, task.owner_id, run_id)
-                    if current is None:
-                        return
-                    payload = await unit.scheduled_tasks.get_active_payload(current.id, current.owner_id, now)
-                    if payload is None or payload.capability_id != current.capability_id or payload.binding_hash != current.confirmation_binding_hash:
-                        raise ValueError("task_payload_unavailable")
-                    target, parameters = self._payload_protector.reveal(
-                        task_id=current.id, owner_id=current.owner_id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
-                        payload_version=payload.payload_version, nonce=payload.nonce, ciphertext=payload.ciphertext,
+        owner = await self._retain_owner_limit(task.owner_id)
+        try:
+            async with self._global, owner:
+                try:
+                    async with self._database.unit_of_work() as unit:
+                        current = await unit.scheduled_tasks.get_claimed_for_execution(task.id, task.owner_id, run_id)
+                        if current is None:
+                            return
+                        payload = await unit.scheduled_tasks.get_active_payload(current.id, current.owner_id, now)
+                        if payload is None or payload.capability_id != current.capability_id or payload.binding_hash != current.confirmation_binding_hash:
+                            raise ValueError("task_payload_unavailable")
+                        target, parameters = self._payload_protector.reveal(
+                            task_id=current.id, owner_id=current.owner_id, capability_id=payload.capability_id, binding_hash=payload.binding_hash,
+                            payload_version=payload.payload_version, nonce=payload.nonce, ciphertext=payload.ciphertext,
+                        )
+                        tool = self._registry.get(payload.capability_id)
+                        if tool is None:
+                            raise ValueError("task_capability_unavailable")
+                        arguments = {"target": target, **parameters}
+                        tool.validate_arguments(arguments)
+                        if not await unit.scheduled_tasks.mark_running(current.id, run_id, now):
+                            return
+                    result = await asyncio.wait_for(
+                        self._executor.execute(ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))),
+                        timeout=self._run_timeout_seconds,
                     )
-                    tool = self._registry.get(payload.capability_id)
-                    if tool is None:
-                        raise ValueError("task_capability_unavailable")
-                    arguments = {"target": target, **parameters}
-                    tool.validate_arguments(arguments)
-                    if not await unit.scheduled_tasks.mark_running(current.id, run_id, now):
-                        return
-                result = await asyncio.wait_for(
-                    self._executor.execute(ToolRequest(tool.definition.name, tool.definition.version, cast(dict[str, JsonValue], arguments))),
-                    timeout=self._run_timeout_seconds,
-                )
-                if result.status not in {ToolResultStatus.SUCCEEDED, ToolResultStatus.UNCERTAIN}:
-                    raise ValueError("task_execution_denied")
-                schedule = ScheduleDefinition(task.timezone, datetime.fromisoformat(str(task.schedule["run_at"])), task.schedule.get("interval_minutes"), task.schedule.get("occurrence_limit"))
-                next_run_at = schedule.next_after(now)
-                async with self._database.unit_of_work() as unit:
-                    await unit.scheduled_tasks.complete_claim(task.id, run_id, datetime.now(UTC), next_run_at, result.status.value)
-            except ValueError as error:
-                async with self._database.unit_of_work() as unit:
-                    await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), str(error))
-            except TimeoutError:
-                async with self._database.unit_of_work() as unit:
-                    await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), "task_execution_timed_out")
+                    if result.status not in {ToolResultStatus.SUCCEEDED, ToolResultStatus.UNCERTAIN}:
+                        raise ValueError("task_execution_denied")
+                    schedule = ScheduleDefinition(task.timezone, datetime.fromisoformat(str(task.schedule["run_at"])), task.schedule.get("interval_minutes"), task.schedule.get("occurrence_limit"))
+                    next_run_at = schedule.next_after(now)
+                    async with self._database.unit_of_work() as unit:
+                        await unit.scheduled_tasks.complete_claim(task.id, run_id, datetime.now(UTC), next_run_at, result.status.value)
+                except ValueError as error:
+                    async with self._database.unit_of_work() as unit:
+                        await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), str(error))
+                except TimeoutError:
+                    async with self._database.unit_of_work() as unit:
+                        await unit.scheduled_tasks.fail_claim(task.id, run_id, datetime.now(UTC), "task_execution_timed_out")
+        finally:
+            await self._release_owner_limit(task.owner_id, owner)
+
+    async def _retain_owner_limit(self, owner_id: UUID) -> asyncio.Semaphore:
+        async with self._owner_limits_guard:
+            semaphore, users = self._owner_limits.get(owner_id, (asyncio.Semaphore(self._maximum_per_owner), 0))
+            self._owner_limits[owner_id] = semaphore, users + 1
+            return semaphore
+
+    async def _release_owner_limit(self, owner_id: UUID, semaphore: asyncio.Semaphore) -> None:
+        async with self._owner_limits_guard:
+            current = self._owner_limits.get(owner_id)
+            if current is None or current[0] is not semaphore:
+                return
+            if current[1] == 1:
+                self._owner_limits.pop(owner_id, None)
+            else:
+                self._owner_limits[owner_id] = semaphore, current[1] - 1
