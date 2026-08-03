@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,7 +32,7 @@ from tara_api.safety.clock import SystemClock
 from tara_api.safety.confirmations import DeterministicConfirmationService
 from tara_api.safety.policy import DeterministicActionPolicyService
 from tara_api.tasks.mapping import CapabilityTaskMapper
-from tara_api.tasks.service import ScheduledTaskService
+from tara_api.tasks.service import ScheduledTask, ScheduledTaskService
 
 
 class _ConsequentialTestTool:
@@ -174,6 +175,112 @@ async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> 
     second = await service.create(context, command)
 
     assert first.id == second.id
+
+
+async def test_concurrent_equivalent_consequential_creates_share_task_and_proposal(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication, additional_tools=(_ConsequentialTestTool(),))
+    command = _command(
+        capability_id="fake.scheduled.send",
+        target="private-recipient",
+        parameters={"content": "private-payload"},
+    )
+
+    tasks = await asyncio.gather(*(service.create(context, command) for _ in range(10)))
+
+    assert len({task.id for task in tasks}) == 1
+    assert len({task.confirmation_id for task in tasks}) == 1
+    async with database.session() as database_session:
+        task_count = await database_session.scalar(select(func.count()).select_from(ScheduledTaskModel))
+        proposal_count = await database_session.scalar(
+            select(func.count()).select_from(PendingConfirmationModel)
+        )
+    assert task_count == 1
+    assert proposal_count == 1
+
+
+async def test_concurrent_approval_has_one_activation_winner(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication, additional_tools=(_ConsequentialTestTool(),))
+    task = await service.create(
+        context,
+        _command(
+            capability_id="fake.scheduled.send",
+            target="private-recipient",
+            parameters={"content": "private-payload"},
+        ),
+    )
+
+    results = await asyncio.gather(
+        service.approve_confirmation(context, task.id, "yes"),
+        service.approve_confirmation(context, task.id, "yes"),
+        return_exceptions=True,
+    )
+
+    activated = [result for result in results if getattr(result, "state", None) is TaskState.ACTIVE]
+    assert len(activated) == 1
+    async with database.session() as database_session:
+        row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task.id))
+        consumption_count = await database_session.scalar(
+            select(func.count()).select_from(PendingConfirmationModel).where(
+                PendingConfirmationModel.id == task.confirmation_id,
+                PendingConfirmationModel.consumed_at.is_not(None),
+            )
+        )
+    assert row is not None and row.state == TaskState.ACTIVE.value and row.next_run_at is not None
+    assert consumption_count == 1
+
+
+async def test_concurrent_mismatched_payload_rejects_without_second_task(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication)
+
+    results = await asyncio.gather(
+        service.create(context, _command(instruction="First payload")),
+        service.create(context, _command(instruction="Different payload")),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, ScheduledTask) for result in results) == 1
+    assert any(
+        isinstance(result, ValueError) and str(result) == "idempotency_key_payload_mismatch"
+        for result in results
+    )
+    async with database.session() as database_session:
+        task_count = await database_session.scalar(select(func.count()).select_from(ScheduledTaskModel))
+    assert task_count == 1
+
+
+async def test_idempotency_keys_are_isolated_by_authenticated_session(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    context, authentication = await _authenticated_context(database)
+    owner, second_session, _token = await authentication.login("owner@example.test", "safe-password")
+    second_context = AuthenticatedOwnerContext(owner, second_session)
+    root = tmp_path / "root"
+    root.mkdir()
+    service = _service(database, root, authentication)
+
+    first = await service.create(context, _command())
+    second = await service.create(second_context, _command())
+
+    assert first.id != second.id
 
 
 @pytest.mark.parametrize(

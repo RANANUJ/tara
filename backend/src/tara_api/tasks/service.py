@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from tara_api.domain.auth import AuthenticatedOwnerContext
 from tara_api.domain.models import ConfirmationStatus, JsonValue, ToolRequest
@@ -53,51 +55,77 @@ class ScheduledTaskService:
         self._capability_registry = capability_registry
         self._policy = policy
         self._confirmations = confirmations
+        self._creation_locks: dict[tuple[UUID, UUID, str], tuple[asyncio.Lock, int]] = {}
+        self._creation_locks_guard = asyncio.Lock()
 
     async def create(self, context: AuthenticatedOwnerContext, command: ScheduledTaskCreateCommand) -> ScheduledTask:
         mapped = CapabilityTaskMapper(self._capability_registry, self._policy).map(command)
         key_hash = sha256(command.idempotency_key.encode()).hexdigest()
         payload_hash = command.binding_hash()
-        async with self._database.unit_of_work() as unit:
-            session = unit._require_session()  # noqa: SLF001
-            existing = await session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.owner_id == context.owner.id, ScheduledTaskModel.idempotency_key_hash == key_hash))
-            if existing is not None:
-                if existing.schedule.get("idempotency_payload_hash") != payload_hash:
-                    raise ValueError("idempotency_key_payload_mismatch")
-                if mapped.confirmation_required and existing.confirmation_id is None:
-                    raise ValueError("task_confirmation_unavailable")
-                return self._record(existing)
-            model = ScheduledTaskModel(
-                owner_id=context.owner.id,
-                owner_session_id=context.session.id,
-                title=command.title.strip(),
-                task_kind=TaskKind.REMINDER.value,
-                instruction=command.instruction.strip(),
-                schedule={
-                    "run_at": command.schedule.run_at.astimezone(UTC).isoformat(),
-                    "interval_minutes": command.schedule.interval_minutes,
-                    "occurrence_limit": command.schedule.occurrence_limit,
-                    "idempotency_payload_hash": payload_hash,
-                },
-                timezone=command.schedule.timezone,
-                capability_id=mapped.capability_id,
-                target_summary=mapped.target_summary,
-                target_identity_hash=mapped.target_hash,
-                parameters_hash=mapped.parameters_hash,
-                confirmation_binding_hash=mapped.binding_hash,
-                risk_level=mapped.risk_level,
-                enabled=not mapped.confirmation_required,
-                state=(
-                    TaskState.PENDING_CONFIRMATION if mapped.confirmation_required else TaskState.ACTIVE
-                ).value,
-                next_run_at=(
-                    None
-                    if mapped.confirmation_required
-                    else command.schedule.next_after(datetime.now(UTC))
-                ),
-                idempotency_key_hash=key_hash,
-            )
-            await unit.scheduled_tasks.add(model)
+        identity = context.owner.id, context.session.id, key_hash
+        lock = await self._creation_lock(identity)
+        try:
+            async with lock:
+                return await self._create_locked(context, command, mapped, key_hash, payload_hash)
+        finally:
+            await self._discard_uncontended_creation_lock(identity, lock)
+
+    async def _create_locked(
+        self,
+        context: AuthenticatedOwnerContext,
+        command: ScheduledTaskCreateCommand,
+        mapped: MappedTaskCapability,
+        key_hash: str,
+        payload_hash: str,
+    ) -> ScheduledTask:
+        try:
+            async with self._database.unit_of_work() as unit:
+                existing = await unit.scheduled_tasks.get_by_idempotency(
+                    context.owner.id,
+                    context.session.id,
+                    key_hash,
+                )
+                if existing is not None:
+                    if existing.schedule.get("idempotency_payload_hash") != payload_hash:
+                        raise ValueError("idempotency_key_payload_mismatch")
+                    if mapped.confirmation_required and existing.confirmation_id is None:
+                        raise ValueError("task_confirmation_unavailable")
+                    return self._record(existing)
+                model = ScheduledTaskModel(
+                    owner_id=context.owner.id,
+                    owner_session_id=context.session.id,
+                    title=command.title.strip(),
+                    task_kind=TaskKind.REMINDER.value,
+                    instruction=command.instruction.strip(),
+                    schedule={
+                        "run_at": command.schedule.run_at.astimezone(UTC).isoformat(),
+                        "interval_minutes": command.schedule.interval_minutes,
+                        "occurrence_limit": command.schedule.occurrence_limit,
+                        "idempotency_payload_hash": payload_hash,
+                    },
+                    timezone=command.schedule.timezone,
+                    capability_id=mapped.capability_id,
+                    target_summary=mapped.target_summary,
+                    target_identity_hash=mapped.target_hash,
+                    parameters_hash=mapped.parameters_hash,
+                    confirmation_binding_hash=mapped.binding_hash,
+                    risk_level=mapped.risk_level,
+                    enabled=not mapped.confirmation_required,
+                    state=(
+                        TaskState.PENDING_CONFIRMATION
+                        if mapped.confirmation_required
+                        else TaskState.ACTIVE
+                    ).value,
+                    next_run_at=(
+                        None
+                        if mapped.confirmation_required
+                        else command.schedule.next_after(datetime.now(UTC))
+                    ),
+                    idempotency_key_hash=key_hash,
+                )
+                await unit.scheduled_tasks.add(model)
+        except IntegrityError:
+            return await self._race_winner(context, key_hash, payload_hash, mapped)
 
         if not mapped.confirmation_required:
             return self._record(model)
@@ -126,6 +154,48 @@ class ScheduledTaskService:
         if attached is None:
             raise ValueError("task_confirmation_unavailable")
         return self._record(attached)
+
+    async def _race_winner(
+        self,
+        context: AuthenticatedOwnerContext,
+        key_hash: str,
+        payload_hash: str,
+        mapped: MappedTaskCapability,
+    ) -> ScheduledTask:
+        async with self._database.unit_of_work() as unit:
+            existing = await unit.scheduled_tasks.get_by_idempotency(
+                context.owner.id,
+                context.session.id,
+                key_hash,
+            )
+            if existing is None:
+                raise ValueError("task_creation_unavailable")
+            if existing.schedule.get("idempotency_payload_hash") != payload_hash:
+                raise ValueError("idempotency_key_payload_mismatch")
+            if mapped.confirmation_required and existing.confirmation_id is None:
+                raise ValueError("task_confirmation_unavailable")
+            return self._record(existing)
+
+    async def _creation_lock(self, identity: tuple[UUID, UUID, str]) -> asyncio.Lock:
+        async with self._creation_locks_guard:
+            lock, users = self._creation_locks.get(identity, (asyncio.Lock(), 0))
+            self._creation_locks[identity] = lock, users + 1
+            return lock
+
+    async def _discard_uncontended_creation_lock(
+        self,
+        identity: tuple[UUID, UUID, str],
+        lock: asyncio.Lock,
+    ) -> None:
+        async with self._creation_locks_guard:
+            current = self._creation_locks.get(identity)
+            if current is None or current[0] is not lock:
+                return
+            users = current[1] - 1
+            if users == 0:
+                self._creation_locks.pop(identity, None)
+            else:
+                self._creation_locks[identity] = lock, users
 
     async def mark_pending_confirmation(self, context: AuthenticatedOwnerContext, task_id: UUID) -> bool:
         """M14 approval is required before a consequential task may be scheduled."""
@@ -179,7 +249,9 @@ class ScheduledTaskService:
             activated = await unit.scheduled_tasks.activate_after_confirmation(
                 task_id,
                 context.owner.id,
+                context.session.id,
                 confirmation_id,
+                row.confirmation_binding_hash or "",
                 next_run_at,
             )
         return self._record(activated) if activated is not None else None

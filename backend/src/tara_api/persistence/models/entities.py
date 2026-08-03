@@ -293,7 +293,12 @@ class ScheduledTaskModel(TimestampedModel, Base):
 
     __tablename__ = "scheduled_tasks"
     __table_args__ = (
-        UniqueConstraint("owner_id", "idempotency_key_hash", name="uq_scheduled_tasks_owner_idempotency"),
+        UniqueConstraint(
+            "owner_id",
+            "owner_session_id",
+            "idempotency_key_hash",
+            name="uq_scheduled_tasks_owner_session_idempotency",
+        ),
         Index("ix_scheduled_tasks_due", "enabled", "state", "next_run_at"),
     )
 
