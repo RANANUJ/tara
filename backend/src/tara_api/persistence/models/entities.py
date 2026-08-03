@@ -313,6 +313,7 @@ class ScheduledTaskModel(TimestampedModel, Base):
     idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     capability_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     target_summary: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_identity_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parameters_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
     confirmation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
