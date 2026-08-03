@@ -25,8 +25,9 @@ class DatabaseHealth:
 class Database:
     """Own the async engine and make SQLite connection rules explicit."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, encryption_key: str | None = None) -> None:
         self.database_url = database_url
+        self.encryption_key = encryption_key
         connect_args: dict[str, object] = {}
         if self._is_sqlite:
             connect_args["timeout"] = 30
@@ -38,6 +39,8 @@ class Database:
         )
         if self._is_sqlite:
             event.listen(self.engine.sync_engine, "connect", self._enable_sqlite_foreign_keys)
+            if self.encryption_key:
+                event.listen(self.engine.sync_engine, "connect", self._set_sqlite_encryption_key)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
     @property
@@ -66,6 +69,16 @@ class Database:
             return DatabaseHealth(available=False)
         return DatabaseHealth(available=True)
 
+    async def check_integrity(self) -> bool:
+        """Verify database integrity via PRAGMA integrity_check."""
+        try:
+            async with self.engine.connect() as connection:
+                res = await connection.execute(text("PRAGMA integrity_check"))
+                row = res.fetchone()
+                return bool(row and row[0] == "ok")
+        except (OSError, SQLAlchemyError):
+            return False
+
     def session(self) -> AsyncSession:
         """Create a session for a unit-of-work transaction boundary."""
         return self.session_factory()
@@ -82,5 +95,16 @@ class Database:
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    def _set_sqlite_encryption_key(self, dbapi_connection: Any, _connection_record: Any) -> None:
+        """Apply PRAGMA key for SQLCipher/encrypted SQLite connections."""
+        if not self.encryption_key:
+            return
+        cursor = dbapi_connection.cursor()
+        try:
+            escaped_key = self.encryption_key.replace("'", "''")
+            cursor.execute(f"PRAGMA key = '{escaped_key}'")
         finally:
             cursor.close()

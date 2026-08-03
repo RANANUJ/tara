@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     database_url: str = "sqlite+aiosqlite:///./data/tara.db"
+    database_encryption_key: SecretStr = SecretStr("")
+    backup_directory: str = "./data/backups"
     service_secret: SecretStr = SecretStr("")
     task_payload_encryption_key: SecretStr = SecretStr("")
     session_absolute_minutes: int = Field(default=1440, ge=5, le=10080)

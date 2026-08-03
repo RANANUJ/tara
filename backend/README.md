@@ -31,6 +31,11 @@ python -m uvicorn tara_api.main:app --app-dir backend/src --reload
 python -m ruff check backend
 python -m mypy backend/src
 python -m pytest backend/tests
+
+# M17 Administrative & Deployment CLI tools:
+tara-backup
+tara-restore <path-to-backup.tar.gz>
+tara-diagnostics
 ```
 
 ## M9A local text model (optional)

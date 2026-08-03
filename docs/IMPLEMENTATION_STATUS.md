@@ -1,5 +1,20 @@
 # Tara Implementation Status
 
+## M17 Complete - Production Hardening and Private Deployment
+
+- Completed scope: implemented complete production hardening, Tailscale same-origin HTTPS routing configuration (`Caddyfile`, `nginx.conf`), process manager unit files (`tara-backend.service`, `tara-frontend.service`, `start-tara.ps1`), SQLCipher/database encryption key integration, atomic backup/restore service (`BackupService`, `tara-backup`, `tara-restore`), redacted diagnostics utility (`DiagnosticsService`, `tara-diagnostics`, `GET /api/v1/admin/diagnostics`), administrative REST API endpoints (`/api/v1/admin/*`), responsive Next.js admin page at `/admin`, and complete DEP-001 through DEP-010 release gate test suite.
+- Security & Encryption: Added `database_encryption_key` with separate secret key management. Verified PRAGMA key integration and redaction of all secrets/keys in diagnostics and log outputs.
+- Backup & Restore: Implemented atomic SQLite online copy, database integrity verification (`PRAGMA integrity_check`), Alembic migration compatibility validation, and ChromaDB state archiving/restoration.
+- Production Deployment: Built same-origin reverse proxy definitions mapping `/api/v1/*` & `/ws/v1/*` to FastAPI backend on `127.0.0.1:8000` and all web routes to Next.js on `127.0.0.1:3000`.
+- Release Gates: Verified DEP-001 through DEP-010 suites in `backend/tests/deployment/test_deployment_release_gates.py`.
+- Validation Totals:
+  - Backend pytest: `313/313 passed` (0 errors, 0 failures)
+  - Frontend Vitest: `21/21 passed` (11 test files)
+  - Frontend Next.js production build: `Successful` (pages `/`, `/actions`, `/admin`, `/tasks`, `/api/health`)
+  - Ruff linter: `All checks passed!`
+  - mypy type checker: `Success: no issues found in 118 source files`
+
+
 ## M16 Complete - Proactive Reminders and Briefings
 
 - Completed scope: implemented full scheduled-task runtime, owner-scoped REST API transport, authenticated WebSocket task event/command protocol, responsive Next.js tasks management UI, scheduler health/status metrics, and complete deterministic test coverage.

@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from tara_api.api.errors import install_error_handlers
 from tara_api.api.middleware import install_request_middleware
+from tara_api.api.v1.admin import router as admin_router
 from tara_api.api.v1.auth import router as auth_router
 from tara_api.api.v1.confirmations import router as confirmations_router
 from tara_api.api.v1.actions import router as actions_router
@@ -117,7 +118,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
-    app.state.database = database or Database(resolved_settings.database_url)
+    db_key = resolved_settings.database_encryption_key.get_secret_value() or None
+    app.state.database = database or Database(resolved_settings.database_url, encryption_key=db_key)
     filesystem_tool: AllowlistedFilesystemListTool | None = None
     filesystem_state = CapabilityState.DISABLED
     if resolved_settings.tools_filesystem_read_enabled:
@@ -385,6 +387,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(actions_router, prefix="/api/v1")
     app.include_router(confirmations_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(websocket_router, prefix="/api/v1")
     return app

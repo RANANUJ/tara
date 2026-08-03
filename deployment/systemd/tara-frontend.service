@@ -1,0 +1,15 @@
+[Unit]
+Description=Tara Next.js Frontend Service
+After=network.target tara-backend.service
+
+[Service]
+Type=simple
+User=tara
+WorkingDirectory=/opt/tara/frontend
+Environment=NODE_ENV=production PORT=3000 HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

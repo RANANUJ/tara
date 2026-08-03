@@ -35,6 +35,9 @@ dev = [
 
 [project.scripts]
 tara-api = "tara_api.main:run"
+tara-backup = "tara_api.admin.cli:backup_cli"
+tara-restore = "tara_api.admin.cli:restore_cli"
+tara-diagnostics = "tara_api.admin.cli:diagnostics_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tara_api"]

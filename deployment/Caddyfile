@@ -1,0 +1,25 @@
+# Caddy reverse proxy configuration for Tara private same-origin HTTPS deployment over Tailscale.
+# Replace tara.your-tailnet.ts.net with your Tailscale node's machine name.
+
+{$TAILSCALE_HOSTNAME:tara.local} {
+    tls internal
+
+    # Proxy WebSocket & REST API to FastAPI backend
+    handle /api/v1/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle /ws/v1/* {
+        reverse_proxy 127.0.0.1:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote}
+            header_up Connection "Upgrade"
+            header_up Upgrade "websocket"
+        }
+    }
+
+    # Proxy all web app routes to Next.js frontend
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}

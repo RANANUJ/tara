@@ -1,0 +1,15 @@
+[Unit]
+Description=Tara FastAPI Backend Service
+After=network.target
+
+[Service]
+Type=simple
+User=tara
+WorkingDirectory=/opt/tara/backend
+EnvironmentFile=/opt/tara/backend/.env
+ExecStart=/opt/tara/backend/.venv/bin/python -m uvicorn tara_api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
