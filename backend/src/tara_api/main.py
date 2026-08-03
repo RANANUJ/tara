@@ -194,6 +194,10 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         maximum_per_owner=resolved_settings.scheduler_max_runs_per_owner,
         claim_lease_seconds=resolved_settings.scheduler_claim_lease_seconds,
         run_timeout_seconds=resolved_settings.scheduler_run_timeout_seconds,
+        cleanup_interval_seconds=resolved_settings.scheduler_cleanup_interval_seconds,
+        cleanup_batch_size=resolved_settings.scheduler_cleanup_batch_size,
+        payload_retention_hours=resolved_settings.scheduler_payload_retention_hours,
+        run_retention_days=resolved_settings.scheduler_run_retention_days,
     )
     app.state.fake_consequential_service = FakeConsequentialActionService(
         app.state.confirmation_service,

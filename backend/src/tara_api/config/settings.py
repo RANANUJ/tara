@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     scheduler_max_runs_per_owner: int = Field(default=1, ge=1, le=8)
     scheduler_claim_lease_seconds: int = Field(default=60, ge=1, le=300)
     scheduler_run_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    scheduler_cleanup_interval_seconds: int = Field(default=300, ge=10, le=3600)
+    scheduler_cleanup_batch_size: int = Field(default=32, ge=1, le=256)
+    scheduler_payload_retention_hours: int = Field(default=24, ge=1, le=24 * 365)
+    scheduler_run_retention_days: int = Field(default=30, ge=1, le=365)
+    scheduler_shutdown_timeout_seconds: int = Field(default=10, ge=1, le=60)
     tools_filesystem_read_enabled: bool = False
     tools_filesystem_read_roots: tuple[str, ...] = ()
     fake_consequential_enabled: bool = False

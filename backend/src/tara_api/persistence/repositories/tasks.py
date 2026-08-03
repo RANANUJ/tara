@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,6 +113,41 @@ class SqlAlchemyScheduledTaskRepository:
                 )
             ).all()
         )
+
+    async def cleanup_payloads(self, cutoff: datetime, limit: int) -> int:
+        candidates = list(
+            (
+                await self._session.scalars(
+                    select(TaskExecutionPayloadModel.id)
+                    .where(
+                        (TaskExecutionPayloadModel.revoked_at <= cutoff)
+                        | (TaskExecutionPayloadModel.expires_at <= cutoff)
+                    )
+                    .order_by(TaskExecutionPayloadModel.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        if not candidates:
+            return 0
+        result = await self._session.execute(delete(TaskExecutionPayloadModel).where(TaskExecutionPayloadModel.id.in_(candidates)))
+        return int(cast(CursorResult[object], result).rowcount)
+
+    async def cleanup_runs(self, cutoff: datetime, limit: int) -> int:
+        candidates = list(
+            (
+                await self._session.scalars(
+                    select(ScheduledTaskRunModel.id)
+                    .where(ScheduledTaskRunModel.finished_at.is_not(None), ScheduledTaskRunModel.finished_at <= cutoff)
+                    .order_by(ScheduledTaskRunModel.finished_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        if not candidates:
+            return 0
+        result = await self._session.execute(delete(ScheduledTaskRunModel).where(ScheduledTaskRunModel.id.in_(candidates)))
+        return int(cast(CursorResult[object], result).rowcount)
 
     async def cancel_for_owner(self, task_id: UUID, owner_id: UUID, now: datetime) -> bool:
         task = await self.get_for_owner(task_id, owner_id)

@@ -32,6 +32,10 @@ class ScheduledTaskScheduler:
         maximum_per_owner: int = 1,
         claim_lease_seconds: int = 60,
         run_timeout_seconds: int = 30,
+        cleanup_interval_seconds: int = 300,
+        cleanup_batch_size: int = 32,
+        payload_retention_hours: int = 24,
+        run_retention_days: int = 30,
     ) -> None:
         if not 1 <= due_batch_size <= 64 or not 1 <= maximum_concurrency <= 8:
             raise ValueError("invalid_scheduler_limits")
@@ -47,6 +51,11 @@ class ScheduledTaskScheduler:
         self._due_batch_size = due_batch_size
         self._lease = timedelta(seconds=claim_lease_seconds)
         self._run_timeout_seconds = run_timeout_seconds
+        self._cleanup_interval = timedelta(seconds=cleanup_interval_seconds)
+        self._cleanup_batch_size = cleanup_batch_size
+        self._payload_retention = timedelta(hours=payload_retention_hours)
+        self._run_retention = timedelta(days=run_retention_days)
+        self._last_cleanup_at: datetime | None = None
         self._global = asyncio.Semaphore(maximum_concurrency)
         self._owner_limits: dict[UUID, asyncio.Semaphore] = {}
         self._maximum_per_owner = maximum_per_owner
@@ -75,8 +84,20 @@ class ScheduledTaskScheduler:
 
     async def _run(self) -> None:
         while not self._stopping:
-            await self.tick()
+            now = datetime.now(UTC)
+            await self.tick(now)
+            if self._last_cleanup_at is None or now - self._last_cleanup_at >= self._cleanup_interval:
+                with suppress(Exception):
+                    await self.cleanup(now)
             await asyncio.sleep(self._poll_seconds)
+
+    async def cleanup(self, now: datetime | None = None) -> tuple[int, int]:
+        current = now or datetime.now(UTC)
+        async with self._database.unit_of_work() as unit:
+            payloads = await unit.scheduled_tasks.cleanup_payloads(current - self._payload_retention, self._cleanup_batch_size)
+            runs = await unit.scheduled_tasks.cleanup_runs(current - self._run_retention, self._cleanup_batch_size)
+        self._last_cleanup_at = current
+        return payloads, runs
 
     async def _process(self, task: ScheduledTaskModel, run_id: UUID, now: datetime) -> None:
         owner = self._owner_limits.setdefault(task.owner_id, asyncio.Semaphore(self._maximum_per_owner))
