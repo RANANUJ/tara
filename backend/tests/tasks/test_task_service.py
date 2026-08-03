@@ -68,6 +68,15 @@ class _FailingSchedulerExecutor:
         return ToolResult(ToolResultStatus.DENIED, "safe denial")
 
 
+class _CountingSchedulerExecutor:
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    async def execute(self, _request: ToolRequest, authorization: object | None = None) -> ToolResult:
+        self.invocations += 1
+        return ToolResult(ToolResultStatus.SUCCEEDED, "safe success")
+
+
 class _FailingConfirmationService(DeterministicConfirmationService):
     async def create_authenticated(
         self,
@@ -225,6 +234,39 @@ async def test_due_task_is_claimed_once_and_fails_closed_without_private_executi
     assert len(runs) == 1
     assert runs[0].state == "failed"
     assert runs[0].error_code == "task_execution_denied"
+
+
+async def test_scheduler_global_dispatch_bound_leaves_remaining_due_work_for_later_tick(database, tmp_path: Path) -> None:
+    context, authentication = await _authenticated_context(database)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = CapabilityRegistry(AllowlistedFilesystemListTool((root,)))
+    service = ScheduledTaskService(
+        database,
+        registry,
+        DeterministicActionPolicyService(),
+        DeterministicConfirmationService(SqlAlchemySafetyStore(database), SystemClock(), context_validator=authentication),
+        TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+    )
+    first = await service.create(context, _command(idempotency_key="global-one"))
+    second = await service.create(context, _command(idempotency_key="global-two"))
+    now = datetime.now(UTC)
+    async with database.session() as database_session:
+        for task_id in (first.id, second.id):
+            row = await database_session.scalar(select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id))
+            assert row is not None
+            row.next_run_at = now - timedelta(seconds=1)
+        await database_session.commit()
+
+    executor = _CountingSchedulerExecutor()
+    scheduler = ScheduledTaskScheduler(
+        database, registry, executor, TaskPayloadProtector("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="),
+        due_batch_size=8, maximum_concurrency=1, maximum_per_owner=1,
+    )
+    assert await scheduler.tick(now) == 1
+    assert executor.invocations == 1
+    assert await scheduler.tick(now) == 1
+    assert executor.invocations == 2
 
 
 async def test_owner_scoped_creation_is_idempotent(database, tmp_path: Path) -> None:
